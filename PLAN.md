@@ -5,125 +5,347 @@
 
 ---
 
-## Execution Order (Important)
-
-Tasks are ordered to avoid blocking. Gateway restart tasks go LAST because restarting OpenClaw kills the current agent session. Tasks requiring Stef's input go LAST for the same reason.
-
----
-
 ## ✅ Completed
 
 - [x] Step 1–8: Data layer, all agents, app scaffold, file server
 - [x] GitHub repo: github.com/stratosokaramanis-droid/limitless-app
 - [x] All 4 Telegram bots wired (Stratos, Pulse, Dawn, Muse)
 - [x] Full architecture documentation (DOCS.md)
+- [x] Morning routine correct order (9 cards)
+- [x] Security (chmod 600), daily backup cron, Vite proxy
+- [x] Historical snapshots + /history endpoints
+- [x] Integration tests (41/41)
+- [x] State tab — 4 pillars (Sleep, Nutrition, Dopamine, Mood) + composite score
+- [x] Dawn + Muse on opus, daily session reset at 3am
+- [x] Vote categories defined, Muse emits nutritionScore + dopamineQuality
 
 ---
 
-## 🔧 In Progress / Next
+## 🔧 Current Phase — Backend Completion
 
-### Phase 1 — No Restart Required (Do First)
-
-**1.1 Fix morning routine order**
-- Current `morningRoutine.js` has wrong card order
-- Correct order per Stef:
-  1. `sleep-screenshot` — Sleep Cycle screenshot → Pulse
-  2. `morning-reading` — Reading (Power of Now / Creative Act)
-  3. `journaling` — One page, ~5 minutes
-  4. `review-plan` — Review plan, affirmations, values, philosophies
-  5. `sunlight-walk` — Sunlight, walk, think about the day
-  6. `fitmind` — FitMind training + screenshot → Pulse
-  7. `shower` — Cold shower
-  8. `visualization` — Short-term visualization
-  9. `write-values` — Write values, beliefs, affirmations
-  - (10) Badge training — future, skip for now
-  - (11) Log Morning → Dawn conversation (already the completion screen flow)
-- Update `morningRoutine.js`, update DOCS.md table
-- Status: ⬜ TODO
-
-**1.2 Security hardening**
-- `chmod 600 ~/.openclaw/openclaw.json` — tokens in plaintext, restrict access
-- Add `.openclaw/openclaw.json` to a "never commit" warning in README
-- Status: ⬜ TODO
-
-**1.3 Daily backup cron**
-- OpenClaw cron job, runs at 11pm every night
-- Archives `~/.openclaw/data/shared/` → `~/.openclaw/data/backups/YYYY-MM-DD/`
-- Keeps last 30 days
-- Status: ⬜ TODO
-
-**1.4 Vite proxy for /api/*
-- Problem: app calls `http://localhost:3001` which doesn't work on phone through tunnel
-- Fix: Vite proxy in `vite.config.js` — `/api/*` → `http://localhost:3001`
-- App updated to call `/api/morning-block-log` etc. instead of `http://localhost:3001/...`
-- File server stays fully private (not exposed via tunnel)
-- Status: ⬜ TODO
-
-**1.5 Historical data snapshots in file server**
-- Current issue: daily JSON files get overwritten — no history for charts/trends
-- Add to file server: before resetting a file for a new day, archive to `~/.openclaw/data/shared/history/YYYY-MM-DD/`
-- New endpoints:
-  - `GET /history` — list of available dates
-  - `GET /history/:date/:file` — specific day's data
-- This powers the 7-day trend in the State tab
-- Status: ⬜ TODO
-
-**1.6 Integration test script**
-- Bash script: `~/limitless-app/scripts/test-integrations.sh`
-- Tests:
-  - File server GET endpoints return valid JSON
-  - POST /morning-block-log correctly updates the file
-  - POST /creative-block-log works
-  - Historical endpoint works
-  - All shared JSON files exist and are valid
-  - Each agent workspace has SOUL.md and AGENTS.md
-  - OpenClaw gateway is running
-  - All 4 bot tokens are present in config
-- Outputs PASS/FAIL per test
-- Status: ⬜ TODO
-
-**1.7 State tab — vertical energy bar**
-- Spawn coding sub-agent for UI work
-- The State tab shows a single vertical energy bar (primary metric)
-- Energy bar is a composite 1–10 score calculated from:
-  - `sleep-data.json` → hoursSlept, sleepScore (weight: 25%)
-  - `fitmind-data.json` → workoutCompleted, score (weight: 15%)
-  - `morning-block-log.json` → completedCount/total (weight: 10%)
-  - `morning-state.json` → energyScore, mentalClarity, overallMorningScore (weight: 35%)
-  - `creative-state.json` → energyScore, nutrition.logged (weight: 15%)
-- Visual: tall vertical bar, fills from bottom, color shifts from cool → warm as score rises
-- Below the bar: key stats (hours slept, FitMind score, morning score, today's priority from Dawn)
-- If no data yet (morning not done): bar shows at baseline, stats show dashes
-- Reads from `/api/*` endpoints — falls back gracefully if server offline
-- Status: ⬜ TODO
-
-**1.8 Update documentation throughout**
-- Keep DOCS.md current after every change
-- Commit with every meaningful change
-- Status: ongoing
+### Priority order: data layer → agents → app → gateway restart
 
 ---
 
-### Phase 2 — Gateway Restart Required (Do Last)
+## Phase A — Data Architecture (No Restart)
 
-**2.1 Upgrade Dawn + Muse to opus**
-- ✅ Done — morning-checkin and creative-checkin now on `anthropic/claude-opus-4-6`
-- Pulse stays on sonnet (vision extraction, doesn't need conversational depth)
+**A.1 Add timestamps to all agent-written files**
 
-**2.2 Add daily session reset**
-- ✅ Done — global `session.reset.mode: "daily", atHour: 3` added to config
-- Also added explicit session context rules to Dawn and Muse SOUL.md files
+Currently missing `createdAt`/`updatedAt` in Pulse, Dawn, Muse outputs.
+
+Update SOUL.md for each agent to write:
+```json
+{ "date": "YYYY-MM-DD", "createdAt": "ISO-8601", "updatedAt": "ISO-8601", ... }
+```
+- Pulse: add to `sleep-data.json` and `fitmind-data.json`
+- Dawn: add to `morning-state.json`
+- Muse: add to `creative-state.json`
+- Status: ⬜ TODO
+
+**A.2 Create new data stub files**
+
+New files in `~/.openclaw/data/shared/`:
+
+`work-sessions.json`
+```json
+{
+  "date": null,
+  "sessions": [],
+  "totalSessions": 3,
+  "completedSessions": 0,
+  "lunchBreakLogged": false,
+  "lunchMeal": null,
+  "lunchNutritionScore": null
+}
+```
+
+Each session object:
+```json
+{
+  "id": 1,
+  "startedAt": "ISO-8601",
+  "endedAt": "ISO-8601",
+  "durationMinutes": 90,
+  "focus": "what we're working on",
+  "evaluationCriteria": "how to know if it went well",
+  "outcomes": "what actually happened",
+  "outcomeScore": null,
+  "flowScore": null,
+  "compositeScore": null,
+  "meal": null,
+  "nutritionScore": null,
+  "notes": ""
+}
+```
+
+`votes.json`
+```json
+{
+  "date": null,
+  "votes": []
+}
+```
+
+Each vote object:
+```json
+{
+  "id": "uuid-or-timestamp-based",
+  "timestamp": "ISO-8601",
+  "action": "human-readable description of what happened",
+  "category": "nutrition | work | mental-power | personality | creativity | physical | relationships",
+  "polarity": "positive | negative",
+  "source": "agent-id that emitted this vote",
+  "weight": 1
+}
+```
+
+`night-routine.json`
+```json
+{
+  "date": null,
+  "startedAt": null,
+  "completedAt": null,
+  "letGoCompleted": false,
+  "letGoTimestamp": null,
+  "nervousSystemCompleted": false,
+  "planCompleted": false,
+  "planTimestamp": null,
+  "tomorrowPlan": "",
+  "promptsReviewed": false,
+  "promptsTimestamp": null,
+  "affirmationsReviewed": false,
+  "affirmationsTimestamp": null,
+  "alterMemoriesCompleted": false,
+  "alterMemoriesTimestamp": null
+}
+```
+
+`midday-checkin.json`
+```json
+{
+  "date": null,
+  "triggeredAt": null,
+  "energyScore": null,
+  "notes": "",
+  "rawNotes": ""
+}
+```
+
+- Status: ⬜ TODO
+
+**A.3 Update file server with new endpoints**
+
+New GET endpoints (same read-only pattern as existing):
+- `GET /work-sessions`
+- `GET /votes`
+- `GET /night-routine`
+- `GET /midday-checkin`
+
+New POST endpoints:
+- `POST /work-sessions/start` — body: `{ sessionId, focus, evaluationCriteria }` → starts session, sets startedAt
+- `POST /work-sessions/end` — body: `{ sessionId, outcomes, outcomeScore, flowScore, compositeScore, meal?, nutritionScore? }` → completes session
+- `POST /votes` — body: `{ votes: [...] }` → appends votes to today's list
+- `POST /night-routine` — body: `{ field, value, timestamp? }` → updates a field
+- `POST /midday-checkin` — body: full checkin object → writes file
+
+All POST handlers: reset for new day, archive yesterday, write back.
+
+- Status: ⬜ TODO
 
 ---
 
-### Phase 3 — Needs Stef's Input (Do Last)
+## Phase B — New Agents (No Restart)
 
-**3.1 Cloudflare tunnel**
-- Install `cloudflared` on the machine
-- Create a Cloudflare tunnel pointing at localhost:3000
-- Needs: Cloudflare account login, tunnel name/domain decision
-- Once tunnel URL is confirmed, update any hardcoded references
-- Status: ⬜ TODO — needs Stef to auth with Cloudflare
+**B.1 Forge — Work Session Agent (`work-session`)**
+
+- **Personality:** Sharp, analytical, results-focused. No warmup. Gets straight to what matters.
+- **Bot:** `@limitless_forge_bot` (new Telegram bot)
+- **Role:** Manages all 3 work sessions. Start convo + end convo per session.
+
+**Session START conversation:**
+1. Read `work-sessions.json` to see which session is next (1, 2, or 3)
+2. Open with: "Session [N]. What are we building?" or "Session [N]. What's the focus?"
+3. Extract: focus area, specific goal, evaluation criteria ("how do we know it went well?")
+4. Write session start to `work-sessions.json` with `startedAt`
+5. Optional: scan `morning-state.json` and `creative-state.json` for context on the user's state
+6. Fire user up with one line if appropriate: knows when to add fuel, knows when to stay quiet
+
+**Session END conversation:**
+1. Open with: "Session done. What happened?"
+2. Extract outcomes (what actually got built/decided/moved), not just effort
+3. Assess `flowScore` (1-10): was it deep focus or interrupted and scattered?
+4. Assess `outcomeScore` (1-10): did the criteria get met? Honest read.
+5. `compositeScore` = (outcomeScore * 0.6 + flowScore * 0.4)
+6. If user mentions meal: extract and assess `nutritionScore`
+7. Write completed session to `work-sessions.json`
+8. Append votes to `votes.json`
+9. Append event to `events.jsonl`
+
+**Between sessions / mid-day optional check-in:**
+- Same agent, same chat
+- User triggers it whenever
+- Same philosophy: extract what's real, store it, done
+
+**B.2 Luna — Night Routine Agent (`night-routine`)**
+
+- **Personality:** Calm, grounded, slightly philosophical. Matches the wind-down energy. Not intense. Present.
+- **Bot:** `@limitless_luna_bot` (new Telegram bot)
+- **Role:** Night routine, bed routine, next-day planning, vote review, alter memories support
+
+**Night routine flow:**
+1. Read everything from today — `morning-state.json`, `creative-state.json`, `work-sessions.json`, `votes.json`
+2. Open with a brief reflection: one line on how the day looked from the data
+3. Guide through what hasn't been done yet (meditation, nervous system, planning)
+4. For next-day planning: engage in actual planning dialogue — what matters tomorrow, what to protect, what to prioritize
+5. Write plan to `night-routine.json`
+
+**Bed routine support:**
+- User sends the next day's plan (pic or text) → Luna stores in `night-routine.tomorrowPlan`
+- Prompts: Luna asks the prompt questions conversationally if user wants, or just marks as reviewed
+- Affirmations: marks completed
+- Alter Memories: on request, reads `votes.json` and returns all negative votes from today in a clean format for the meditation
+
+**Vote summary:**
+- Luna can surface a vote summary at end of day: "Here's the scoreboard."
+- Shows positive vs negative by category
+- Does not add votes herself (day is done), but reads and summarizes
+
+---
+
+## Phase C — Vote Casting System
+
+**Every agent emits votes as part of their session close.**
+
+Vote flow: agent conversation → agent writes `votes.json` via POST → Luna can read and surface at night.
+
+**Agent vote responsibilities:**
+
+| Agent | What they vote on |
+|-------|------------------|
+| Pulse | `sleep-quality` (positive if >7h + good score, negative if <6h), `mental-training` (positive if FitMind completed) |
+| Dawn | `morning-block` (positive if 7+/9 done, negative if <5/9), `resistance-faced` (personality), `fire-level` (mental-power) |
+| Muse | `nutrition` (from nutritionScore), `dopamine` (from dopamineQuality), `creative-output` (from creativeOutput quality) |
+| Forge | `work-output` (from outcomeScore), `flow-access` (from flowScore), `nutrition` (from session meal) |
+| Luna | Does NOT emit votes. Reads and surfaces them. |
+
+**Vote schema validation rules:**
+- `category` must be one of: `nutrition`, `work`, `mental-power`, `personality`, `creativity`, `physical`, `relationships`
+- `polarity` must be `positive` or `negative` (neutral = skip, don't store)
+- `action` is a human-readable sentence: "Completed FitMind — score 88"
+- `weight` default 1. Future: some actions will have higher weight
+
+**Example votes from a good day:**
+```json
+[
+  {"timestamp":"...", "action":"Slept 7.5h, score 82", "category":"physical", "polarity":"positive", "source":"limitless-state"},
+  {"timestamp":"...", "action":"Completed FitMind — score 88", "category":"mental-power", "polarity":"positive", "source":"limitless-state"},
+  {"timestamp":"...", "action":"8/9 morning block completed", "category":"work", "polarity":"positive", "source":"morning-checkin"},
+  {"timestamp":"...", "action":"Noticed resistance during visualization", "category":"mental-power", "polarity":"negative", "source":"morning-checkin"},
+  {"timestamp":"...", "action":"Ate clean: eggs, fruit, coffee", "category":"nutrition", "polarity":"positive", "source":"creative-checkin"},
+  {"timestamp":"...", "action":"YouTube rabbit hole — 1h passive consumption", "category":"mental-power", "polarity":"negative", "source":"creative-checkin"},
+  {"timestamp":"...", "action":"Shipped HyperSpace logo concepts — outcomeScore 8", "category":"creativity", "polarity":"positive", "source":"work-session"},
+  {"timestamp":"...", "action":"Deep flow state in session 2 — flowScore 9", "category":"mental-power", "polarity":"positive", "source":"work-session"}
+]
+```
+
+---
+
+## Phase D — App Updates (Frontend — Stef builds, I spec)
+
+The Today tab needs to represent the FULL day, not just morning + creative.
+
+**Day flow in the app:**
+
+| Phase | Trigger | App shows | Agent deep-link |
+|-------|---------|-----------|----------------|
+| Morning Routine | Auto (start of day) | 9 cards, hold/skip | Pulse (screenshots) |
+| Creative Block | After morning complete | Timer + check-in button | Muse |
+| Deep Work | User taps "Start Session" | Session card (session #, focus, timer) | Forge (start + end) |
+| Mid-day check-in | Optional, user triggers | Simple check-in button | Forge |
+| Night Routine | User taps "Night Mode" | Checklist cards + planning | Luna |
+| Bed Routine | After night routine | Checklist cards | Luna |
+
+**Session card during Deep Work:**
+```
+┌──────────────────────────┐
+│  Session 1 of 3          │
+│                          │
+│  90:00 ───────────────   │  ← countdown timer
+│                          │
+│  💬 START SESSION →      │  ← to Forge (pre-session)
+│  💬 END SESSION →        │  ← to Forge (post-session, appears after start)
+│                          │
+│  Break: 10 min           │  ← between sessions
+│  Lunch: 30 min           │  ← after session 2
+└──────────────────────────┘
+```
+
+**State tab updates needed:**
+- Add work session composite scores to dopamine/work inputs
+- Add votes chart (positive vs negative by category) — future
+
+---
+
+## Phase E — Gateway Restart (Last)
+
+**E.1 Add Forge + Luna to OpenClaw config**
+- New bot tokens (Stef creates via BotFather)
+- New agents with accountId bindings
+- New agent entries in `agents.list`
+- Requires restart
+
+**E.2 Update Pulse SOUL.md to emit votes**
+- Already writes sleep-data.json and fitmind-data.json
+- Add: after writing, also POST votes to `votes.json`
+- Requires restart (config change + SOUL.md update)
+
+---
+
+## Phase F — Needs Stef
+
+**F.1 Cloudflare tunnel**
+- Needs Cloudflare account auth
+- Once set up: update any hardcoded URLs
+
+**F.2 New bot creation (BotFather)**
+- `@limitless_forge_bot` (Forge)
+- `@limitless_luna_bot` (Luna)
+
+---
+
+## Full Day Data Flow Reference
+
+```
+Wake up
+  └─ Sleep Cycle screenshot → Pulse → sleep-data.json + votes.json
+
+Morning Block
+  ├─ App card interactions → morning-block-log.json (via file server)
+  ├─ FitMind screenshot → Pulse → fitmind-data.json + votes.json
+  └─ Log Morning → Dawn → morning-state.json + votes.json + events.jsonl
+
+Creative Block (3h)
+  ├─ App timer → creative-block-log.json (via file server)
+  └─ Check-in → Muse → creative-state.json + votes.json + events.jsonl
+
+Deep Work Sessions (3 × 90min)
+  ├─ Start → Forge → work-sessions.json (session started)
+  ├─ [optional] Mid-session check-in → Forge
+  └─ End → Forge → work-sessions.json (session completed) + votes.json + events.jsonl
+
+[Optional mid-day check-in → Forge → midday-checkin.json]
+
+Free Time
+  └─ Nothing tracked unless user triggers Forge/Stratos
+
+Night Routine
+  └─ User triggers → Luna → night-routine.json + vote summary
+
+Bed Routine
+  ├─ Send plan → Luna → night-routine.tomorrowPlan
+  ├─ Prompts/Affirmations → Luna marks complete
+  └─ Alter Memories → Luna reads votes.json, returns negative votes
+```
 
 ---
 
@@ -134,28 +356,17 @@ Tasks are ordered to avoid blocking. Gateway restart tasks go LAST because resta
 | Metric | Weight | Sources |
 |--------|--------|---------|
 | Sleep | 30% | `sleep-data.json` → hoursSlept + sleepScore |
-| Dopamine | 25% | FitMind completion/score + morning completion rate + `dopamineQuality` from Muse |
+| Dopamine | 25% | FitMind completion/score + morning completion rate + `dopamineQuality` from Muse + work flowScore |
 | Mood | 25% | Dawn's emotionalState tag + energyScore + Muse's energyScore |
-| Nutrition | 20% | `nutritionScore` from Muse + nutrition.logged |
+| Nutrition | 20% | `nutritionScore` from Muse + Forge's session meal scoring |
 
-STATE = weighted average of whichever sub-metrics have data. Missing metrics excluded from weighting (not zeroed).
+STATE = weighted average of whichever sub-metrics have data.
 
-**New fields in `creative-state.json`:**
-- `nutritionScore` (1–10 or null) — Muse's honest meal quality score
-- `dopamineQuality` (1–10 or null) — Muse's assessment of activity quality
-
-**Visual layout:**
-- Left: tall vertical STATE bar with composed score number
-- Right: 4 horizontal mini-bars (Sleep, Nutrition, Dopamine, Mood) with individual scores
-- Color: `#4A9EFF` blue (low) → `#7ED4A5` green (mid) → `#FFD166` warm (high)
-- Bottom: stat pills (hours slept, FitMind score, morning completion, overall morning score, mood tag)
-- No data state: empty bar + "Complete your morning to see your state."
+**Future additions to state:** work compositeScore will feed dopamine, Luna's end-of-night state will be a final mood read.
 
 ---
 
 ## Morning Routine — Complete Reference
-
-Cards in order (stored in `morningRoutine.js`):
 
 | # | ID | Title | Description | Pulse Button |
 |---|-----|-------|-------------|:---:|
@@ -169,69 +380,47 @@ Cards in order (stored in `morningRoutine.js`):
 | 8 | `visualization` | 🎯 Visualization | Short-term visualization. See the day clearly | — |
 | 9 | `write-values` | 🔥 Write Values | Write values, beliefs, affirmations by hand | — |
 
-After card 9: Completion screen → "💬 Log Morning →" → Dawn bot  
-Badge training: future, not in scope yet
+After card 9: Completion screen → "💬 Log Morning →" → Dawn bot
 
 ---
 
-## Data Flow — Energy State Inputs
+## Night Routine Reference
 
-Only these things affect the energy bar:
+| # | ID | Title | Notes |
+|---|-----|-------|-------|
+| 1 | `vf-game` | 🎮 VF Game | Future — skip for now |
+| 2 | `letting-go` | 🌊 Letting Go | Meditation to release the day's tension |
+| 3 | `nervous-system` | 🧘 Regulate | Nervous system regulation exercise |
+| 4 | `plan-tomorrow` | 📋 Plan Tomorrow | Write tomorrow's plan (send to Luna) |
 
-| Input | Source | Extracted by | Stored in |
-|-------|--------|-------------|-----------|
-| Hours slept | Sleep Cycle screenshot | Pulse | `sleep-data.json` |
-| Sleep quality/score | Sleep Cycle screenshot | Pulse | `sleep-data.json` |
-| Mental workout completed | FitMind screenshot | Pulse | `fitmind-data.json` |
-| FitMind score | FitMind screenshot | Pulse | `fitmind-data.json` |
-| Morning completion rate | App card interactions | App | `morning-block-log.json` |
-| Energy score | Dawn conversation | Dawn | `morning-state.json` |
-| Mental clarity | Dawn conversation | Dawn | `morning-state.json` |
-| Overall morning score | Dawn assessment | Dawn | `morning-state.json` |
-| Creative energy score | Muse conversation | Muse | `creative-state.json` |
-| Nutrition logged + meal | Muse conversation | Muse | `creative-state.json` |
+## Bed Routine Reference
 
-Everything else (individual habit completions, journaling content, etc.) is logged but does NOT affect the energy bar.
-
----
-
-## Agent Context — What Each Agent Needs to Know
-
-### Pulse
-- On screenshot: identify app (Sleep Cycle vs FitMind), extract all visible metrics
-- Write to the correct file in `~/.openclaw/data/shared/`
-- Handle edge cases: blurry screenshot, no data visible, wrong app
-- Confirm to user with one line: "Got it. Sleep: 7.5h, score 82."
-
-### Dawn
-- Reads: `morning-block-log.json`, `sleep-data.json`, `fitmind-data.json`
-- Opens with ONE sentence summarizing what she knows, then asks how it felt
-- Conversation extracts: energy (1-10), mental clarity (1-10), emotional state tag, insights, resistance, day priority, fire level
-- Stores `overallMorningScore` as HER assessment (not self-report) based on conversation
-- Handles null data gracefully: if sleep-data is empty, skips that context
-- Ends clean — doesn't drag the conversation past when she has what she needs
-
-### Muse
-- Reads: `morning-state.json`, `morning-block-log.json`
-- Opens with "How was the creative block?" — nothing more
-- Follows the conversation, extracts: activities, energy, meals (if mentioned), creative output, mood shift
-- If user mentions food → extract meal and quality naturally, don't make it feel like a form
-- Stores nutrition data which feeds the energy bar
+| # | ID | Title | Notes |
+|---|-----|-------|-------|
+| 1 | `finalize-plan` | ✅ Finalize Plan | Send pic or paste plan text to Luna |
+| 2 | `read-prompts` | ❓ Read Prompts | Set of questions — can discuss with Luna |
+| 3 | `affirmations` | 🔥 Affirmations | Read affirmations |
+| 4 | `alter-memories` | 🧠 Alter Memories | Luna provides negative votes for the meditation |
 
 ---
 
-## Open Questions (Resolve with Stef)
+## Open Questions
 
-- [ ] Cloudflare account — which domain/subdomain for the tunnel?
-- [ ] What does "short-term visualization" mean exactly? (for later card description)
-- [ ] Badge training card — when does it appear? Conditional? (for later)
-- [ ] Afternoon/evening blocks — design after morning + creative nailed
+- [ ] Cloudflare account — which domain/subdomain?
+- [ ] Forge + Luna bot names — confirm "Forge" and "Luna" or rename?
+- [ ] Work session timer — in the app, does it count down or count up?
+- [ ] Mid-day check-in — same Forge bot or separate?
+- [ ] Night routine cards — same hold-to-confirm pattern as morning?
+- [ ] Alter Memories meditation — what format does Luna return the negative votes? (full list? categorized? narrative?)
+- [ ] Prompts — what are the "read prompts" exactly? Fixed questions or dynamic?
 
 ---
 
 ## Notes
 
-- **Never commit bot tokens** — `openclaw.json` is not in the repo and should never be
-- **Gateway restart kills current session** — always do config changes that require restart at the very end
-- **The file server (port 3001) is never public** — always proxied through Vite or stays local
-- **Daily reset at 3am** — matches Stef's night owl schedule. Both app localStorage and agent sessions reset at 3am
+- **Never commit bot tokens** — `openclaw.json` not in repo
+- **Gateway restart kills current session** — config changes go last
+- **File server (port 3001) never public** — always via Vite proxy
+- **Daily reset at 3am** — app localStorage + agent sessions
+- **Everything timestamped** — every agent-written file includes `createdAt`/`updatedAt`
+- **Neutral votes = skip** — don't store them, they add noise
