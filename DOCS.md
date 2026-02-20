@@ -624,10 +624,10 @@ The State tab shows four sub-metrics and one composed STATE score.
 ### Navigation
 
 4 tabs via bottom nav:
-- 🌅 **Today** — morning cards → completion → creative block (→ work sessions, night routine: future)
+- 🌅 **Today** — morning cards → completion → creative block → work sessions → night/bed routine
 - 📊 **State** — 4-pillar energy bar + stat pills
-- 🏅 **Badges** — placeholder (future)
-- ⚡ **Stats** — placeholder (future)
+- 🏅 **Badges** — 7 mental badges with XP, tiers, streaks, active missions
+- ⚡ **Stats** — today's votes by category, source, and timeline
 
 ### Morning Routine Cards
 
@@ -670,10 +670,19 @@ src/
 │   ├── HabitCard.jsx         ← single card: hold-to-confirm, skip, Pulse deep-link
 │   ├── CompletionScreen.jsx  ← post-morning summary + Dawn deep-link
 │   ├── CreativeBlock.jsx     ← timer + Muse deep-link
+│   ├── WorkSessions.jsx      ← 3×90min sessions, timers, breaks, Forge deep-links
+│   ├── NightRoutine.jsx      ← 7 night/bed items, hold-to-confirm, Luna deep-links
 │   ├── StateTab.jsx          ← 4-pillar energy bar + score calculation
-│   └── PlaceholderTab.jsx    ← Badges/Stats placeholder
+│   ├── BadgesTab.jsx         ← 7 badges, XP bars, tiers, streaks, active missions
+│   └── StatsTab.jsx          ← vote breakdown by category/source + timeline
+├── data/
+│   ├── morningRoutine.js     ← the 9 morning items config
+│   └── nightRoutine.js       ← the 7 night/bed items config
+server/
+├── index.js                  ← the file server (single write authority)
 └── data/
-    └── morningRoutine.js     ← the 9 morning items config
+    ├── badges.json           ← 7 badge definitions + 35 exercises (static)
+    └── missions.json         ← 105 pre-written missions (static)
 ```
 
 ---
@@ -686,7 +695,10 @@ src/
 | 💬 Log Morning → | `t.me/limitless_dawn_bot` | Completion screen |
 | 💬 Check In → | `t.me/limitless_muse_bot` | Creative block view |
 
-Forge and Luna are opened by DM-ing them directly (no deep-link from app yet).
+| 💬 Start/End Session → | `t.me/limitless_forge_bot` | Work sessions view |
+| 💬 Open Luna → | `t.me/limitless_luna_bot` | Night/bed routine cards |
+
+Forge is also opened by DM-ing directly for mid-day check-ins.
 
 ---
 
@@ -1031,7 +1043,7 @@ Each boss encounter: +25 XP for the related badge. Stored in `boss-encounters.js
 | App: State tab (4 pillars + composite) | ✅ |
 | Vite proxy (/api/* → :3001) | ✅ |
 | App state reconciliation on mount | ✅ |
-| Integration tests (68/68) | ✅ |
+| Integration tests (89/89) | ✅ |
 | Historical snapshots + /history endpoints | ✅ |
 | Daily backup cron (11pm EST) | ✅ |
 | Security (chmod 600, field whitelisting) | ✅ |
@@ -1050,12 +1062,15 @@ Each boss encounter: +25 XP for the related badge. Stored in `boss-encounters.js
 | Boss encounters: Logging + XP reward | ✅ |
 | Badge data: persistent progress (no daily reset) | ✅ |
 | App: deep work session UI | ✅ |
-| App: night/bed routine UI | ⬜ TODO |
-| App: Stats tab (vote history) | ⬜ TODO |
-| App: Badges tab (badge progress UI) | ⬜ TODO |
-| Agent wiring: VF Game in Luna SOUL.md | ⬜ TODO |
-| Agent wiring: Badge exercises in agent SOULs | ⬜ TODO |
-| Cloudflare tunnel (phone access) | ⬜ Config ready, run manually (see below) |
+| App: night/bed routine UI (7 items, hold-to-confirm, Luna links) | ✅ |
+| App: Stats tab (vote breakdown, timeline, source view) | ✅ |
+| App: Badges tab (7 badges, XP bars, tiers, streaks, missions) | ✅ |
+| App: Work sessions UI (3×90min, timers, Forge links) | ✅ |
+| Agent wiring: VF Game in Luna SOUL.md | ✅ |
+| Agent wiring: Badge exercises in all agent SOULs | ✅ |
+| Agent wiring: Mission management in Forge + Luna | ✅ |
+| Vite config: port 3000, host, allowedHosts | ✅ |
+| Cloudflare tunnel | ✅ Config ready, run manually (see Infrastructure) |
 
 ---
 
