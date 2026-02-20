@@ -2,6 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import HabitCard from './HabitCard.jsx'
 import CompletionScreen from './CompletionScreen.jsx'
 import CreativeBlock from './CreativeBlock.jsx'
+import WorkSessions from './WorkSessions.jsx'
 
 const slideVariants = {
   enter: { x: 120, opacity: 0 },
@@ -18,6 +19,9 @@ export default function MorningRoutine({
   creativeBlockStartTime,
   onStartCreativeBlock
 }) {
+  if (currentView === 'work-sessions') {
+    return <WorkSessions />
+  }
   const nextIndex = items.findIndex((item) => !statuses[item.id])
   const allComplete = nextIndex === -1
 
@@ -29,6 +33,7 @@ export default function MorningRoutine({
       <CreativeBlock
         startTime={creativeBlockStartTime}
         onStart={onStartCreativeBlock}
+        onEnterWorkSessions={() => onViewChange('work-sessions')}
       />
     )
   }

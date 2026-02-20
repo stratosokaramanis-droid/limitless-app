@@ -1,0 +1,304 @@
+{
+  "tiers": [
+    { "level": 1, "name": "Initiate", "xpRequired": 0 },
+    { "level": 2, "name": "Apprentice", "xpRequired": 750 },
+    { "level": 3, "name": "Practitioner", "xpRequired": 3000 },
+    { "level": 4, "name": "Adept", "xpRequired": 10000 },
+    { "level": 5, "name": "Master", "xpRequired": 30000 }
+  ],
+  "xpRules": {
+    "exerciseXp": 5,
+    "bossEncounterXp": 25,
+    "vfBonusThreshold": 8,
+    "vfBonusXp": 10,
+    "vfPenaltyThreshold": 3,
+    "vfPenaltyXp": -5,
+    "streakBonuses": [
+      { "days": 7, "multiplier": 1.25 },
+      { "days": 14, "multiplier": 1.5 },
+      { "days": 30, "multiplier": 2.0 }
+    ]
+  },
+  "badges": [
+    {
+      "slug": "rdf",
+      "name": "Reality Distortion Field",
+      "emoji": "🔮",
+      "description": "Your conviction reshapes the environment around you. Strong opinions, emotional commitment, narrative control, and an intensity that makes mediocrity feel shameful.",
+      "identityStatement": "I am someone whose conviction reshapes the environment around me.",
+      "voteCategory": "personality",
+      "exercises": [
+        {
+          "id": "rdf-taste-training",
+          "title": "Taste Training",
+          "description": "Form 3 sharp opinions about products, designs, or music. Write 2-3 sentences each on what works, what doesn't, and why. No hedging.",
+          "xp": 5
+        },
+        {
+          "id": "rdf-declaration-practice",
+          "title": "Declaration Practice",
+          "description": "Make 3+ zero-qualification statements in real interactions today. No 'I think' or 'maybe' — flat statements held with conviction.",
+          "xp": 5
+        },
+        {
+          "id": "rdf-flinch-tracking",
+          "title": "Flinch Tracking",
+          "description": "Track every hedge, qualification, and backpedal you make today. Write down the count and the worst one.",
+          "xp": 5
+        },
+        {
+          "id": "rdf-identity-leak-kill",
+          "title": "Kill One Identity Leak",
+          "description": "Identify and eliminate one identity leak today: hedging language, nervous laughing, over-explaining, fidgeting, phone-checking, apologetic body language.",
+          "xp": 5
+        },
+        {
+          "id": "rdf-narrative-building",
+          "title": "Narrative Building",
+          "description": "Read or refine your narrative — the story of what you're building that's slightly ahead of reality. Make it more compelling than yesterday.",
+          "xp": 5
+        }
+      ]
+    },
+    {
+      "slug": "frame-control",
+      "name": "Frame Control",
+      "emoji": "🪞",
+      "description": "Internal stillness under pressure. Non-reactivity. Holding tension without resolving it. Your frame is yours — no one enters without permission.",
+      "identityStatement": "My frame is mine. No one enters it without my permission. No one moves it without my consent.",
+      "voteCategory": "personality",
+      "exercises": [
+        {
+          "id": "fc-silence-practice",
+          "title": "Silence Practice",
+          "description": "Let 3+ silences exist after you speak today. Don't fill them. Count the seconds.",
+          "xp": 5
+        },
+        {
+          "id": "fc-tension-tolerance",
+          "title": "Tension Tolerance",
+          "description": "Enter or sit in 1+ moment of social tension without resolving it. Notice the pull to smooth things over and don't act on it.",
+          "xp": 5
+        },
+        {
+          "id": "fc-mirror-drill",
+          "title": "Mirror Drill",
+          "description": "After 3 interactions today, journal every adjustment you made to match the other person — voice, energy, opinion, posture.",
+          "xp": 5
+        },
+        {
+          "id": "fc-delayed-response",
+          "title": "Delayed Response",
+          "description": "Pause 3+ seconds before responding to 2+ challenging or provocative moments. Break the stimulus-response chain.",
+          "xp": 5
+        },
+        {
+          "id": "fc-frame-awareness",
+          "title": "Frame Awareness",
+          "description": "Journal 3 frames you noticed today — in conversations, ads, news, question phrasing. Identify what frame is being set and by whom.",
+          "xp": 5
+        }
+      ]
+    },
+    {
+      "slug": "fearlessness",
+      "name": "Fearlessness",
+      "emoji": "🦁",
+      "description": "Act despite fear. Approach over avoidance. Speed in uncertainty. Recovery from failure. Fear is your compass, not your cage.",
+      "identityStatement": "I move toward what scares me. Fear is my compass, not my cage.",
+      "voteCategory": "personality",
+      "exercises": [
+        {
+          "id": "fear-daily-dose",
+          "title": "Daily Fear Dose",
+          "description": "Do one thing that scares you today. Non-negotiable. It can be small but it must be real.",
+          "xp": 5
+        },
+        {
+          "id": "fear-rejection-practice",
+          "title": "Rejection Practice",
+          "description": "Deliberately seek 1+ rejection today. Ask for a discount, an upgrade, something unreasonable. Desensitize to 'no'.",
+          "xp": 5
+        },
+        {
+          "id": "fear-first-mover",
+          "title": "First Mover",
+          "description": "Be first to speak, decide, or volunteer in 2+ situations today. Don't wait for someone else to go first.",
+          "xp": 5
+        },
+        {
+          "id": "fear-uncertainty-action",
+          "title": "Uncertainty Action",
+          "description": "Make 1+ decision today with incomplete information on a 60-second timer. Act, don't revisit.",
+          "xp": 5
+        },
+        {
+          "id": "fear-exposure-rep",
+          "title": "Exposure Rep",
+          "description": "Put yourself in 1 visible, judgeable situation today. Share work, speak up, post publicly — somewhere you can be seen and critiqued.",
+          "xp": 5
+        }
+      ]
+    },
+    {
+      "slug": "aggression",
+      "name": "Aggression",
+      "emoji": "🔥",
+      "description": "Disgust as fuel. The chip as rocket fuel, not trauma. Refusal to be domesticated. Intensity that comes from deep love for what could be and rage at what is.",
+      "identityStatement": "I refuse to be domesticated. My intensity comes from love for what could be and rage at what is.",
+      "voteCategory": "mental-power",
+      "exercises": [
+        {
+          "id": "agg-disgust-connection",
+          "title": "Connect to the Disgust",
+          "description": "Write raw, unfiltered truth about something mediocre or unacceptable you encountered today. This is your furnace. Feed it.",
+          "xp": 5
+        },
+        {
+          "id": "agg-stop-tolerating",
+          "title": "Stop Tolerating",
+          "description": "Identify one thing you've been tolerating and stop today. Not tomorrow. Today.",
+          "xp": 5
+        },
+        {
+          "id": "agg-channel-emotion",
+          "title": "Channel the Hit",
+          "description": "Next time a negative emotion hits, pour it into productive work within 60 seconds. Convert, don't consume.",
+          "xp": 5
+        },
+        {
+          "id": "agg-raise-standards",
+          "title": "Raise the Bar",
+          "description": "Take one piece of work or one interaction and raise the standard uncomfortably high. Then hold it.",
+          "xp": 5
+        },
+        {
+          "id": "agg-physical-intensity",
+          "title": "Physical Intensity",
+          "description": "Train in a way that requires accessing actual aggression. Last rep, last round, beyond the comfortable stopping point.",
+          "xp": 5
+        }
+      ]
+    },
+    {
+      "slug": "carefreeness",
+      "name": "Carefreeness",
+      "emoji": "🎈",
+      "description": "Non-attachment to outcomes. Lightness under pressure. Immunity to social opinion. Life is a game you're winning by enjoying.",
+      "identityStatement": "I play full out and hold on to nothing. Life is a game I'm winning by enjoying.",
+      "voteCategory": "personality",
+      "exercises": [
+        {
+          "id": "care-outcome-detachment",
+          "title": "Release the Grip",
+          "description": "Do one thing today and consciously release all attachment to the outcome after acting. Full investment, zero grip.",
+          "xp": 5
+        },
+        {
+          "id": "care-unfiltered-speak",
+          "title": "Say the Unfiltered Thing",
+          "description": "Say one thing you'd normally sand down, polish, or soften. Let it land as-is.",
+          "xp": 5
+        },
+        {
+          "id": "care-playfulness",
+          "title": "Playfulness Injection",
+          "description": "Introduce genuine lightness into one serious context today. Not deflecting — playing within the pressure.",
+          "xp": 5
+        },
+        {
+          "id": "care-let-it-fail",
+          "title": "Let It Fail",
+          "description": "Deliberately don't rescue something you'd normally save. Watch what happens without intervening.",
+          "xp": 5
+        },
+        {
+          "id": "care-embarrassment-dose",
+          "title": "Embarrassment Dose",
+          "description": "Do something mildly embarrassing on purpose. Own it. Let the cringe pass through you.",
+          "xp": 5
+        }
+      ]
+    },
+    {
+      "slug": "presence",
+      "name": "Presence",
+      "emoji": "🎯",
+      "description": "Total attention on what's in front of you. Sensory aliveness. Stillness of mind. The present moment is the only place where life actually happens.",
+      "identityStatement": "I am here. Fully. The present moment is the only place where life actually happens, and I don't miss it.",
+      "voteCategory": "mental-power",
+      "exercises": [
+        {
+          "id": "pres-single-task",
+          "title": "Single Task",
+          "description": "Do one thing for 15+ minutes with zero distractions. One tab, one task, one focus. Notice when the pull comes and don't follow it.",
+          "xp": 5
+        },
+        {
+          "id": "pres-sensory-anchoring",
+          "title": "Sensory Anchoring",
+          "description": "Stop 3+ times today and drop into your senses for 15 seconds. Hear, feel, see, taste the air. Full presence.",
+          "xp": 5
+        },
+        {
+          "id": "pres-eye-contact",
+          "title": "Eye Contact",
+          "description": "Maintain steady eye contact in 2+ conversations today. Notice when your eyes want to dart away and hold.",
+          "xp": 5
+        },
+        {
+          "id": "pres-listen-empty",
+          "title": "Listen Without Preparing",
+          "description": "In 2+ conversations, don't formulate your response while they're talking. Let silence exist. Then respond.",
+          "xp": 5
+        },
+        {
+          "id": "pres-body-scan",
+          "title": "Body Scan",
+          "description": "Full body awareness scan from head to feet, 2+ times today. 30 seconds each. Notice what you normally miss.",
+          "xp": 5
+        }
+      ]
+    },
+    {
+      "slug": "bias-to-action",
+      "name": "Bias to Action",
+      "emoji": "⚡",
+      "description": "Default to movement. Speed as weapon. Ship fast, fail fast, build fast. Momentum is fuel. Start before you're ready.",
+      "identityStatement": "I move. While others plan, I act. While others deliberate, I ship. Speed is my weapon. Momentum is my fuel.",
+      "voteCategory": "work",
+      "exercises": [
+        {
+          "id": "bta-two-minute-rule",
+          "title": "Two-Minute Rule",
+          "description": "Execute 3+ sub-10-minute tasks immediately upon thinking of them. Thought → action, zero gap.",
+          "xp": 5
+        },
+        {
+          "id": "bta-daily-ship",
+          "title": "Daily Ship",
+          "description": "Put one real thing into the world today. A message, deliverable, post, prototype. Something that exists outside your head.",
+          "xp": 5
+        },
+        {
+          "id": "bta-kill-planning-loop",
+          "title": "Kill the Planning Loop",
+          "description": "For 2+ tasks today, define the single next physical action and do it immediately. No strategy, no framework.",
+          "xp": 5
+        },
+        {
+          "id": "bta-speed-deadline",
+          "title": "Speed Deadline",
+          "description": "Take one timeline and cut it in half. Then try to beat even that.",
+          "xp": 5
+        },
+        {
+          "id": "bta-prototype-first",
+          "title": "Prototype First",
+          "description": "Build one ugly version of something in under an hour before planning the 'real' thing.",
+          "xp": 5
+        }
+      ]
+    }
+  ]
+}

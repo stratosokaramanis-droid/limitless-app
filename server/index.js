@@ -12,6 +12,11 @@ const PORT = 3001
 const DATA_DIR = path.join(process.env.HOME, '.openclaw/data/shared')
 const HISTORY_DIR = path.join(DATA_DIR, 'history')
 
+// ─── Static reference data ────────────────────────────────────────────────────
+
+const BADGES_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/badges.json'), 'utf8'))
+const MISSIONS_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/missions.json'), 'utf8'))
+
 app.use(cors())
 app.use(express.json())
 
@@ -83,6 +88,55 @@ const STUBS = {
 
 const DAILY_FILES = Object.keys(STUBS)
 
+// ─── Persistent file stubs (no daily reset) ───────────────────────────────────
+
+const PERSISTENT_STUBS = {
+  'badge-progress': {
+    lastUpdated: null,
+    badges: Object.fromEntries(BADGES_DATA.badges.map((b) => [b.slug, {
+      tier: 1, tierName: 'Initiate', xp: 0,
+      exercisesCompleted: 0, missionsCompleted: 0, missionsFailed: 0,
+      bossEncounters: 0, currentStreak: 0, longestStreak: 0, lastActivityDate: null
+    }]))
+  },
+  'badge-missions': {
+    lastAssigned: null,
+    active: [],
+    completed: []
+  }
+}
+
+const DAILY_STUBS_EXTRA = {
+  'badge-daily': {
+    date: null,
+    exercises: [],
+    missionsAttempted: [],
+    xpGained: {}
+  },
+  'vf-game': {
+    date: null,
+    triggeredAt: null,
+    completedAt: null,
+    presenceScore: null,
+    effortLevel: null,
+    affirmations: BADGES_DATA.badges.map((b) => ({
+      badgeSlug: b.slug,
+      statement: b.identityStatement,
+      convictionScore: null,
+      reinforcingActions: [],
+      weakeningActions: [],
+      votes: []
+    })),
+    beliefs: [],
+    guidedQuestions: [],
+    notes: ''
+  }
+}
+
+// Add extra daily stubs to main stubs + daily files list
+Object.assign(STUBS, DAILY_STUBS_EXTRA)
+DAILY_FILES.push(...Object.keys(DAILY_STUBS_EXTRA))
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const filePath = (name) => path.join(DATA_DIR, `${name}.json`)
@@ -104,6 +158,76 @@ const writeJson = (name, data) => {
 
 const nowIso = () => new Date().toISOString()
 const todayStr = () => new Date().toISOString().slice(0, 10)
+
+// Persistent file helpers (no day reset)
+const readPersistent = (name) => {
+  try {
+    const raw = fs.readFileSync(filePath(name), 'utf8')
+    return JSON.parse(raw)
+  } catch {
+    return structuredClone(PERSISTENT_STUBS[name])
+  }
+}
+
+const writePersistent = (name, data) => {
+  data.lastUpdated = nowIso()
+  writeJson(name, data)
+}
+
+// XP engine helpers
+const getTierForXp = (xp) => {
+  const tiers = BADGES_DATA.tiers
+  let tier = tiers[0]
+  for (const t of tiers) {
+    if (xp >= t.xpRequired) tier = t
+    else break
+  }
+  return tier
+}
+
+const getStreakMultiplier = (streak) => {
+  const bonuses = BADGES_DATA.xpRules.streakBonuses
+  let mult = 1.0
+  for (const b of bonuses) {
+    if (streak >= b.days) mult = b.multiplier
+  }
+  return mult
+}
+
+const applyXp = (progress, badgeSlug, rawXp) => {
+  const badge = progress.badges[badgeSlug]
+  if (!badge) return 0
+  const mult = getStreakMultiplier(badge.currentStreak)
+  const xp = Math.round(rawXp * mult)
+  badge.xp = Math.max(0, badge.xp + xp)
+  const tier = getTierForXp(badge.xp)
+  badge.tier = tier.level
+  badge.tierName = tier.name
+  return xp
+}
+
+const updateStreak = (progress, badgeSlug, today) => {
+  const badge = progress.badges[badgeSlug]
+  if (!badge) return
+  if (badge.lastActivityDate === today) return // already counted today
+
+  const yesterday = new Date()
+  yesterday.setDate(yesterday.getDate() - 1)
+  const yesterdayStr = yesterday.toISOString().slice(0, 10)
+
+  if (badge.lastActivityDate === yesterdayStr) {
+    badge.currentStreak += 1
+  } else if (badge.lastActivityDate && badge.lastActivityDate < yesterdayStr) {
+    badge.currentStreak = 1 // streak broken
+  } else {
+    badge.currentStreak = 1 // first activity
+  }
+
+  if (badge.currentStreak > badge.longestStreak) {
+    badge.longestStreak = badge.currentStreak
+  }
+  badge.lastActivityDate = today
+}
 
 // Pick only allowed keys from an object
 const pick = (obj, keys) => {
@@ -477,6 +601,360 @@ app.post('/midday-checkin', (req, res) => {
   res.json({ ok: true })
 })
 
+// ─── GET /badges (static reference) ───────────────────────────────────────────
+
+app.get('/badges', (req, res) => res.json(BADGES_DATA))
+app.get('/badges/missions', (req, res) => res.json(MISSIONS_DATA))
+
+// ─── GET /badge-progress (persistent) ─────────────────────────────────────────
+
+app.get('/badge-progress', (req, res) => res.json(readPersistent('badge-progress')))
+
+// ─── GET /badge-missions (persistent) ─────────────────────────────────────────
+
+app.get('/badge-missions', (req, res) => res.json(readPersistent('badge-missions')))
+
+// ─── POST /badge-progress/exercise ────────────────────────────────────────────
+
+app.post('/badge-progress/exercise', (req, res) => {
+  const { badgeSlug, exerciseId } = req.body
+  if (!badgeSlug || !exerciseId) return res.status(400).json({ error: 'badgeSlug and exerciseId required' })
+
+  const badge = BADGES_DATA.badges.find((b) => b.slug === badgeSlug)
+  if (!badge) return res.status(400).json({ error: 'Unknown badge' })
+  const exercise = badge.exercises.find((e) => e.id === exerciseId)
+  if (!exercise) return res.status(400).json({ error: 'Unknown exercise' })
+
+  const today = todayStr()
+  const progress = readPersistent('badge-progress')
+
+  // Ensure badge exists in progress
+  if (!progress.badges[badgeSlug]) {
+    progress.badges[badgeSlug] = structuredClone(PERSISTENT_STUBS['badge-progress'].badges[badgeSlug])
+  }
+
+  // Update streak
+  updateStreak(progress, badgeSlug, today)
+
+  // Apply XP
+  const xpGained = applyXp(progress, badgeSlug, exercise.xp)
+  progress.badges[badgeSlug].exercisesCompleted += 1
+  writePersistent('badge-progress', progress)
+
+  // Log to badge-daily
+  let daily = resetForNewDay('badge-daily', today)
+  daily.date = today
+  daily.exercises.push({
+    badgeSlug, exerciseId,
+    timestamp: nowIso(),
+    xpGained
+  })
+  if (!daily.xpGained[badgeSlug]) daily.xpGained[badgeSlug] = 0
+  daily.xpGained[badgeSlug] += xpGained
+  writeJson('badge-daily', daily)
+
+  res.json({
+    ok: true, xpGained,
+    totalXp: progress.badges[badgeSlug].xp,
+    tier: progress.badges[badgeSlug].tier,
+    tierName: progress.badges[badgeSlug].tierName,
+    streak: progress.badges[badgeSlug].currentStreak
+  })
+})
+
+// ─── POST /badge-missions/assign ──────────────────────────────────────────────
+
+app.post('/badge-missions/assign', (req, res) => {
+  const { badgeSlugs } = req.body // optional: assign for specific badges, default all
+  const today = todayStr()
+  const progress = readPersistent('badge-progress')
+  const missions = readPersistent('badge-missions')
+
+  // Don't re-assign if already assigned today
+  if (missions.lastAssigned === today) {
+    return res.json({ ok: true, message: 'Already assigned today', active: missions.active })
+  }
+
+  // Move yesterday's pending missions to completed as expired
+  for (const m of missions.active) {
+    if (m.status === 'pending') {
+      m.status = 'expired'
+      m.completedAt = nowIso()
+      missions.completed.push(m)
+    }
+  }
+  missions.active = []
+
+  const slugs = badgeSlugs || BADGES_DATA.badges.map((b) => b.slug)
+
+  for (const slug of slugs) {
+    const badgeProgress = progress.badges[slug]
+    if (!badgeProgress) continue
+    const tier = badgeProgress.tier
+
+    // Get eligible missions (minTier <= current tier)
+    const eligible = MISSIONS_DATA.missions.filter((m) =>
+      m.badgeSlug === slug && m.minTier <= tier
+    )
+    if (eligible.length === 0) continue
+
+    // Pick one random mission
+    const mission = eligible[Math.floor(Math.random() * eligible.length)]
+    missions.active.push({
+      missionId: mission.id,
+      badgeSlug: slug,
+      title: mission.title,
+      description: mission.description,
+      successCriteria: mission.successCriteria,
+      rewardXp: mission.rewardXp,
+      failXp: mission.failXp,
+      minTier: mission.minTier,
+      assignedAt: nowIso(),
+      status: 'pending',
+      completedAt: null,
+      xpAwarded: 0
+    })
+  }
+
+  missions.lastAssigned = today
+  writePersistent('badge-missions', missions)
+
+  // Trim completed history (keep last 500)
+  if (missions.completed.length > 500) {
+    missions.completed = missions.completed.slice(-500)
+    writePersistent('badge-missions', missions)
+  }
+
+  res.json({ ok: true, active: missions.active })
+})
+
+// ─── POST /badge-missions/complete ────────────────────────────────────────────
+
+app.post('/badge-missions/complete', (req, res) => {
+  const { missionId, success, notes } = req.body
+  if (!missionId || success === undefined) return res.status(400).json({ error: 'missionId and success required' })
+
+  const today = todayStr()
+  const missions = readPersistent('badge-missions')
+  const idx = missions.active.findIndex((m) => m.missionId === missionId && m.status === 'pending')
+  if (idx === -1) return res.status(400).json({ error: 'Mission not found or already completed' })
+
+  const mission = missions.active[idx]
+  const progress = readPersistent('badge-progress')
+
+  // Update streak
+  updateStreak(progress, mission.badgeSlug, today)
+
+  const rawXp = success ? mission.rewardXp : mission.failXp
+  const xpGained = applyXp(progress, mission.badgeSlug, rawXp)
+
+  if (success) {
+    progress.badges[mission.badgeSlug].missionsCompleted += 1
+  } else {
+    progress.badges[mission.badgeSlug].missionsFailed += 1
+  }
+  writePersistent('badge-progress', progress)
+
+  mission.status = success ? 'completed' : 'failed'
+  mission.completedAt = nowIso()
+  mission.xpAwarded = xpGained
+  if (notes) mission.notes = notes
+  missions.completed.push(mission)
+  missions.active.splice(idx, 1)
+  writePersistent('badge-missions', missions)
+
+  // Log to badge-daily
+  let daily = resetForNewDay('badge-daily', today)
+  daily.date = today
+  daily.missionsAttempted.push({
+    missionId, badgeSlug: mission.badgeSlug,
+    success, xpGained, timestamp: nowIso()
+  })
+  if (!daily.xpGained[mission.badgeSlug]) daily.xpGained[mission.badgeSlug] = 0
+  daily.xpGained[mission.badgeSlug] += xpGained
+  writeJson('badge-daily', daily)
+
+  res.json({
+    ok: true, success, xpGained,
+    totalXp: progress.badges[mission.badgeSlug].xp,
+    tier: progress.badges[mission.badgeSlug].tier,
+    tierName: progress.badges[mission.badgeSlug].tierName
+  })
+})
+
+// ─── POST /vf-game ────────────────────────────────────────────────────────────
+
+const VF_GAME_FIELDS = ['presenceScore', 'effortLevel', 'affirmations', 'beliefs', 'guidedQuestions', 'notes']
+
+app.post('/vf-game', (req, res) => {
+  const today = todayStr()
+  let data = resetForNewDay('vf-game', today)
+  data.date = today
+  if (!data.triggeredAt) data.triggeredAt = nowIso()
+
+  const allowed = pick(req.body, VF_GAME_FIELDS)
+
+  // Process affirmations and generate votes + XP
+  if (allowed.affirmations && Array.isArray(allowed.affirmations)) {
+    const progress = readPersistent('badge-progress')
+    const rules = BADGES_DATA.xpRules
+    const votesToAppend = []
+
+    for (const aff of allowed.affirmations) {
+      if (!aff.badgeSlug) continue
+
+      // Find existing affirmation slot
+      const slot = data.affirmations.find((a) => a.badgeSlug === aff.badgeSlug)
+      if (slot) {
+        if (aff.convictionScore !== undefined) slot.convictionScore = aff.convictionScore
+        if (aff.reinforcingActions) slot.reinforcingActions = aff.reinforcingActions
+        if (aff.weakeningActions) slot.weakeningActions = aff.weakeningActions
+      }
+
+      // Apply XP based on conviction score
+      if (aff.convictionScore !== undefined) {
+        updateStreak(progress, aff.badgeSlug, today)
+        if (aff.convictionScore >= rules.vfBonusThreshold) {
+          applyXp(progress, aff.badgeSlug, rules.vfBonusXp)
+        } else if (aff.convictionScore <= rules.vfPenaltyThreshold) {
+          applyXp(progress, aff.badgeSlug, rules.vfPenaltyXp)
+        }
+      }
+
+      // Generate votes from reinforcing/weakening actions
+      if (aff.reinforcingActions) {
+        for (const action of aff.reinforcingActions) {
+          votesToAppend.push({
+            action: action,
+            category: BADGES_DATA.badges.find((b) => b.slug === aff.badgeSlug)?.voteCategory || 'personality',
+            polarity: 'positive',
+            source: 'vf-game',
+            weight: 1
+          })
+          if (slot) slot.votes.push({ action, polarity: 'positive', weight: 1 })
+        }
+      }
+      if (aff.weakeningActions) {
+        for (const action of aff.weakeningActions) {
+          votesToAppend.push({
+            action: action,
+            category: BADGES_DATA.badges.find((b) => b.slug === aff.badgeSlug)?.voteCategory || 'personality',
+            polarity: 'negative',
+            source: 'vf-game',
+            weight: 1
+          })
+          if (slot) slot.votes.push({ action, polarity: 'negative', weight: 1 })
+        }
+      }
+      // No action on either → -0.5 vote
+      if ((!aff.reinforcingActions || aff.reinforcingActions.length === 0) &&
+          (!aff.weakeningActions || aff.weakeningActions.length === 0) &&
+          aff.convictionScore !== undefined) {
+        votesToAppend.push({
+          action: `No action taken for: ${BADGES_DATA.badges.find((b) => b.slug === aff.badgeSlug)?.name || aff.badgeSlug}`,
+          category: BADGES_DATA.badges.find((b) => b.slug === aff.badgeSlug)?.voteCategory || 'personality',
+          polarity: 'negative',
+          source: 'vf-game',
+          weight: 0.5
+        })
+        if (slot) slot.votes.push({ action: 'No action taken', polarity: 'negative', weight: 0.5 })
+      }
+    }
+
+    writePersistent('badge-progress', progress)
+
+    // Append VF Game votes to daily votes.json
+    if (votesToAppend.length > 0) {
+      let votesData = resetForNewDay('votes', today)
+      votesData.date = today
+      for (const v of votesToAppend) {
+        if (!VALID_CATEGORIES.has(v.category)) continue
+        votesData.votes.push({
+          id: randomUUID(),
+          timestamp: nowIso(),
+          action: v.action,
+          category: v.category,
+          polarity: v.polarity,
+          source: 'vf-game',
+          weight: v.weight
+        })
+      }
+      writeJson('votes', votesData)
+    }
+  }
+
+  // Apply non-affirmation fields
+  if (allowed.presenceScore !== undefined) data.presenceScore = allowed.presenceScore
+  if (allowed.effortLevel !== undefined) data.effortLevel = allowed.effortLevel
+  if (allowed.beliefs) data.beliefs = allowed.beliefs
+  if (allowed.guidedQuestions) data.guidedQuestions = allowed.guidedQuestions
+  if (allowed.notes !== undefined) data.notes = allowed.notes
+  data.completedAt = nowIso()
+
+  writeJson('vf-game', data)
+  res.json({ ok: true })
+})
+
+// ─── POST /boss-encounters ────────────────────────────────────────────────────
+
+app.post('/boss-encounters', (req, res) => {
+  const { badgeSlug, type, title, content } = req.body
+  if (!badgeSlug || !type || !content) return res.status(400).json({ error: 'badgeSlug, type, and content required' })
+  if (!['text', 'image', 'conversation'].includes(type)) return res.status(400).json({ error: 'type must be text, image, or conversation' })
+
+  const badge = BADGES_DATA.badges.find((b) => b.slug === badgeSlug)
+  if (!badge) return res.status(400).json({ error: 'Unknown badge' })
+
+  const today = todayStr()
+  const progress = readPersistent('badge-progress')
+
+  // Update streak and apply XP
+  updateStreak(progress, badgeSlug, today)
+  const xpGained = applyXp(progress, badgeSlug, BADGES_DATA.xpRules.bossEncounterXp)
+  progress.badges[badgeSlug].bossEncounters += 1
+  writePersistent('badge-progress', progress)
+
+  // Append to boss-encounters.jsonl
+  const entry = {
+    id: randomUUID(),
+    timestamp: nowIso(),
+    badgeSlug,
+    type,
+    title: title || '',
+    content,
+    xpAwarded: xpGained,
+    source: req.body.source || 'user'
+  }
+  fs.appendFileSync(path.join(DATA_DIR, 'boss-encounters.jsonl'), JSON.stringify(entry) + '\n', 'utf8')
+
+  res.json({
+    ok: true, xpGained,
+    totalXp: progress.badges[badgeSlug].xp,
+    tier: progress.badges[badgeSlug].tier,
+    tierName: progress.badges[badgeSlug].tierName
+  })
+})
+
+// ─── GET /boss-encounters ─────────────────────────────────────────────────────
+
+app.get('/boss-encounters', (req, res) => {
+  try {
+    const raw = fs.readFileSync(path.join(DATA_DIR, 'boss-encounters.jsonl'), 'utf8')
+    const entries = raw.split('\n').filter(Boolean)
+      .map((line) => { try { return JSON.parse(line) } catch { return null } })
+      .filter(Boolean)
+
+    // Optional filter by badge
+    const { badge, limit } = req.query
+    let result = badge ? entries.filter((e) => e.badgeSlug === badge) : entries
+    if (limit) result = result.slice(-parseInt(limit, 10))
+
+    res.json(result)
+  } catch {
+    res.json([])
+  }
+})
+
 // ─── Error handler ────────────────────────────────────────────────────────────
 
 process.on('uncaughtException', (err) => {
@@ -493,7 +971,9 @@ fs.mkdirSync(HISTORY_DIR, { recursive: true })
 
 app.listen(PORT, () => {
   console.log(`[${nowIso()}] Limitless file server :${PORT}`)
-  console.log(`  Data:    ${DATA_DIR}`)
-  console.log(`  History: ${HISTORY_DIR}`)
-  console.log(`  Files:   ${DAILY_FILES.join(', ')}`)
+  console.log(`  Data:       ${DATA_DIR}`)
+  console.log(`  History:    ${HISTORY_DIR}`)
+  console.log(`  Daily:      ${DAILY_FILES.join(', ')}`)
+  console.log(`  Persistent: ${Object.keys(PERSISTENT_STUBS).join(', ')}`)
+  console.log(`  Badges:     ${BADGES_DATA.badges.length} badges, ${MISSIONS_DATA.missions.length} missions`)
 })

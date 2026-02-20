@@ -774,11 +774,233 @@ OpenClaw cron job runs at 11pm EST: copies entire `~/.openclaw/data/shared/` to 
 
 ---
 
-## 14. Build Status
+## 14. Mental Badges System
+
+A skill tree / progression system for 7 mental capabilities. Each badge has exercises, missions, a training plan with tier progression, and Identity Vote Casting integration.
+
+### The 7 Badges
+
+| Badge | Slug | Emoji | Identity Statement |
+|-------|------|-------|--------------------|
+| Reality Distortion Field | `rdf` | 🔮 | "I am someone whose conviction reshapes the environment around me." |
+| Frame Control | `frame-control` | 🪞 | "My frame is mine. No one enters it without my permission." |
+| Fearlessness | `fearlessness` | 🦁 | "I move toward what scares me. Fear is my compass, not my cage." |
+| Aggression | `aggression` | 🔥 | "I refuse to be domesticated. My intensity comes from love for what could be and rage at what is." |
+| Carefreeness | `carefreeness` | 🎈 | "I play full out and hold on to nothing. Life is a game I'm winning by enjoying." |
+| Presence | `presence` | 🎯 | "I am here. Fully. The present moment is the only place where life actually happens." |
+| Bias to Action | `bias-to-action` | ⚡ | "I move. While others plan, I act. Speed is my weapon. Momentum is my fuel." |
+
+### Tier Progression (Very Hard)
+
+| Tier | Name | XP Required | Realistic Timeline |
+|------|------|-------------|-------------------|
+| 1 | Initiate | 0 | Start |
+| 2 | Apprentice | 750 | ~5-6 weeks |
+| 3 | Practitioner | 3,000 | ~5-6 months |
+| 4 | Adept | 10,000 | ~1.5-2 years |
+| 5 | Master | 30,000 | ~4+ years |
+
+Master is a life commitment. Not aspirational — actual years of daily work.
+
+### XP Economy
+
+| Source | XP | Notes |
+|--------|-----|-------|
+| Exercise completed | +5 | 5 exercises per badge, 25 XP/day max |
+| Mission success | +15 to +100 | Scales with tier (T1: 15, T2: 25, T3: 40, T4: 60, T5: 100) |
+| Mission fail | +3 to +20 | You tried — partial credit |
+| VF Game conviction ≥ 8 | +10 | Bonus for strong conviction |
+| VF Game conviction ≤ 3 | -5 | Penalty for weak conviction (can't go below 0) |
+| Boss encounter logged | +25 | Recognizing inner resistance patterns |
+| No action (VF Game) | -0.5 vote | Inaction has a cost |
+
+### Streak Multipliers
+
+| Streak | Multiplier | Effect |
+|--------|-----------|--------|
+| 7 days | 1.25x | All XP for that badge × 1.25 |
+| 14 days | 1.5x | All XP for that badge × 1.5 |
+| 30 days | 2.0x | All XP for that badge × 2.0 |
+
+Streak = consecutive days with at least 1 activity for that badge. Miss a day → streak resets to 1.
+
+### Exercises (5 per badge)
+
+Each badge has 5 daily exercises drawn from its training protocol. Each gives +5 XP (before streak multiplier). Exercises are specific, daily-practicable actions.
+
+**Static reference:** `server/data/badges.json` contains all badge definitions and exercises.
+
+### Missions (15 per badge, 105 total)
+
+Pre-written challenge pool distributed across tiers:
+- Tier 1: 5 missions (accessible from start)
+- Tier 2: 4 missions
+- Tier 3: 3 missions
+- Tier 4: 2 missions
+- Tier 5: 1 mission (the ultimate challenge)
+
+Missions are assigned via `POST /badge-missions/assign` — one random mission per badge from the eligible pool (minTier ≤ current tier). Assignment is user-triggered or agent-triggered, NOT automatic.
+
+**Static reference:** `server/data/missions.json` contains all 105 missions.
+
+### Data Files
+
+**Persistent (no daily reset):**
+- `badge-progress.json` — cumulative XP, tiers, streaks per badge
+- `badge-missions.json` — active + completed mission history
+
+**Daily (reset at day change):**
+- `badge-daily.json` — today's exercises and mission attempts
+
+**Append-only:**
+- `boss-encounters.jsonl` — all boss encounters ever logged
+
+### Endpoints
+
+| Endpoint | Method | Called by | What it does |
+|----------|--------|----------|-------------|
+| `/badges` | GET | App/Agents | Returns all badge definitions + exercises |
+| `/badges/missions` | GET | App/Agents | Returns all 105 missions |
+| `/badge-progress` | GET | App/Agents | Returns cumulative progress for all badges |
+| `/badge-progress/exercise` | POST | Agents | Log exercise completion → XP + streak |
+| `/badge-missions` | GET | App/Agents | Returns active + completed missions |
+| `/badge-missions/assign` | POST | Agents/User | Assign today's missions (1 per badge) |
+| `/badge-missions/complete` | POST | Agents | Complete/fail a mission → XP |
+| `/badge-daily` | GET | App | Today's badge activity log |
+| `/boss-encounters` | POST | Agents/User | Log a boss encounter → +25 XP |
+| `/boss-encounters` | GET | App/Agents | List all boss encounters (filter by badge, limit) |
+
+---
+
+## 15. The VF Game
+
+An end-of-day conviction-tracking game centered around the 7 badge identity statements. User-triggered only — no automatic behavior.
+
+### Flow
+
+1. User triggers the VF Game (DMs an agent or uses the app)
+2. For each badge's identity statement: "How much did you feel like this today?" (1-10)
+3. For each: "What actions reinforced this?" / "What actions weakened this?"
+4. Presence check: "How present are you right now?" (1-10) + effort level (1-10)
+5. Optional: guided open-ended questions for finding the "boss" (inner resistance pattern)
+
+### Vote Generation
+
+| Condition | Vote | Weight |
+|-----------|------|--------|
+| Reinforcing action listed | +1 positive vote | 1.0 |
+| Weakening action listed | -1 negative vote | 1.0 |
+| No action for either (and conviction scored) | -0.5 negative vote | 0.5 |
+
+All VF Game votes go into `votes.json` with `source: "vf-game"`. Luna reads them for Alter Memories meditation.
+
+### XP Impact
+
+| Conviction Score | Effect |
+|-----------------|--------|
+| ≥ 8 | +10 XP for that badge |
+| 4-7 | No XP change |
+| ≤ 3 | -5 XP for that badge (can't go below 0) |
+
+### Boss Encounters
+
+Three methods to log:
+1. Send a text message to the agent — it keeps the record
+2. Send an image of journal writing — it keeps the record
+3. Initiate a conversation with the agent — helps describe and express it
+
+Each boss encounter: +25 XP for the related badge. Stored in `boss-encounters.jsonl` (local only, append-only, no analysis yet).
+
+### Data Schema
+
+**vf-game.json (daily reset)**
+```json
+{
+  "date": "2026-02-20",
+  "triggeredAt": "2026-02-20T22:30:00.000Z",
+  "completedAt": "2026-02-20T23:00:00.000Z",
+  "presenceScore": 8,
+  "effortLevel": 7,
+  "affirmations": [
+    {
+      "badgeSlug": "rdf",
+      "statement": "I am someone whose conviction reshapes the environment around me.",
+      "convictionScore": 9,
+      "reinforcingActions": ["Held strong opinion in client meeting"],
+      "weakeningActions": [],
+      "votes": [{"action": "Held strong opinion in client meeting", "polarity": "positive", "weight": 1}]
+    }
+  ],
+  "beliefs": [],
+  "guidedQuestions": [],
+  "notes": ""
+}
+```
+
+**badge-progress.json (persistent)**
+```json
+{
+  "lastUpdated": "2026-02-20T23:00:00.000Z",
+  "badges": {
+    "rdf": {
+      "tier": 1, "tierName": "Initiate", "xp": 30,
+      "exercisesCompleted": 5, "missionsCompleted": 1, "missionsFailed": 0,
+      "bossEncounters": 0, "currentStreak": 3, "longestStreak": 3,
+      "lastActivityDate": "2026-02-20"
+    }
+  }
+}
+```
+
+**badge-daily.json (daily reset)**
+```json
+{
+  "date": "2026-02-20",
+  "exercises": [
+    {"badgeSlug": "rdf", "exerciseId": "rdf-taste-training", "timestamp": "ISO", "xpGained": 5}
+  ],
+  "missionsAttempted": [
+    {"missionId": "rdf-t1-taste-battle", "badgeSlug": "rdf", "success": true, "xpGained": 15, "timestamp": "ISO"}
+  ],
+  "xpGained": {"rdf": 20}
+}
+```
+
+**badge-missions.json (persistent)**
+```json
+{
+  "lastAssigned": "2026-02-20",
+  "active": [
+    {
+      "missionId": "rdf-t1-taste-battle", "badgeSlug": "rdf",
+      "title": "Taste Battle", "description": "...", "successCriteria": "...",
+      "rewardXp": 15, "failXp": 3, "minTier": 1,
+      "assignedAt": "ISO", "status": "pending", "completedAt": null, "xpAwarded": 0
+    }
+  ],
+  "completed": []
+}
+```
+
+**boss-encounters.jsonl (append-only)**
+```jsonl
+{"id":"uuid","timestamp":"ISO","badgeSlug":"frame-control","type":"text","title":"Flinched in negotiation","content":"Caught myself softening when client pushed back on price.","xpAwarded":25,"source":"user"}
+```
+
+### Endpoint
+
+| Endpoint | Method | What it does |
+|----------|--------|-------------|
+| `/vf-game` | GET | Today's VF Game session |
+| `/vf-game` | POST | Submit VF Game results → votes + XP adjustments |
+
+---
+
+## 16. Build Status
 
 | Component | Status |
 |-----------|--------|
-| Shared data layer (11 files) | ✅ |
+| Shared data layer (14 files + 2 append-only) | ✅ |
 | File server (all endpoints, validation, archiving) | ✅ |
 | Pulse agent (screenshot → data + votes via API) | ✅ |
 | Dawn agent (morning check-in → state + votes via API) | ✅ |
@@ -799,15 +1021,27 @@ OpenClaw cron job runs at 11pm EST: copies entire `~/.openclaw/data/shared/` to 
 | Health endpoint | ✅ |
 | Dawn + Muse + Luna on opus | ✅ |
 | Daily session reset at 3am | ✅ |
-| App: deep work session UI | ⬜ TODO |
+| Mental Badges: 7 badge definitions + 35 exercises | ✅ |
+| Mental Badges: 105 pre-written missions (15/badge × 5 tiers) | ✅ |
+| Mental Badges: XP engine (exercises, missions, streaks) | ✅ |
+| Mental Badges: Tier progression system (5 tiers) | ✅ |
+| Mental Badges: Mission assignment + completion endpoints | ✅ |
+| VF Game: Conviction tracking + vote generation | ✅ |
+| VF Game: XP impact (bonus/penalty by conviction score) | ✅ |
+| VF Game: -0.5 weight for inaction | ✅ |
+| Boss encounters: Logging + XP reward | ✅ |
+| Badge data: persistent progress (no daily reset) | ✅ |
+| App: deep work session UI | ✅ |
 | App: night/bed routine UI | ⬜ TODO |
 | App: Stats tab (vote history) | ⬜ TODO |
-| App: Badges tab | ⬜ TODO |
+| App: Badges tab (badge progress UI) | ⬜ TODO |
+| Agent wiring: VF Game in Luna SOUL.md | ⬜ TODO |
+| Agent wiring: Badge exercises in agent SOULs | ⬜ TODO |
 | Cloudflare tunnel (phone access) | ⬜ Needs Stef |
 
 ---
 
-## 15. Key File Reference
+## 17. Key File Reference
 
 | File | Purpose |
 |------|---------|
@@ -820,5 +1054,12 @@ OpenClaw cron job runs at 11pm EST: copies entire `~/.openclaw/data/shared/` to 
 | `~/limitless-app/server/index.js` | The file server (single write authority) |
 | `~/limitless-app/src/data/morningRoutine.js` | The 9 morning items — edit to change routine |
 | `~/limitless-app/scripts/test-integrations.sh` | Integration test suite |
+| `~/limitless-app/server/data/badges.json` | 7 badge definitions + 35 exercises (static) |
+| `~/limitless-app/server/data/missions.json` | 105 pre-written missions (static) |
+| `~/.openclaw/data/shared/badge-progress.json` | Cumulative XP, tiers, streaks (persistent) |
+| `~/.openclaw/data/shared/badge-missions.json` | Active + completed missions (persistent) |
+| `~/.openclaw/data/shared/badge-daily.json` | Today's badge activity (daily reset) |
+| `~/.openclaw/data/shared/vf-game.json` | Today's VF Game session (daily reset) |
+| `~/.openclaw/data/shared/boss-encounters.jsonl` | All boss encounters (append-only) |
 | `~/limitless-app/DOCS.md` | This file |
 | `~/limitless-app/PLAN.md` | Execution plan + open questions |

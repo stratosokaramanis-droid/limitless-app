@@ -8,7 +8,7 @@ const formatDuration = (ms) => {
   return `${hours}:${minutes}:${seconds}`
 }
 
-export default function CreativeBlock({ startTime, onStart }) {
+export default function CreativeBlock({ startTime, onStart, onEnterWorkSessions }) {
   const [now, setNow] = useState(Date.now())
 
   useEffect(() => {
@@ -50,6 +50,12 @@ export default function CreativeBlock({ startTime, onStart }) {
       >
         💬 Check In →
       </a>
+      <button
+        onClick={onEnterWorkSessions}
+        className="text-xs uppercase tracking-[0.25em] text-gray-500"
+      >
+        Enter Work Sessions
+      </button>
     </div>
   )
 }

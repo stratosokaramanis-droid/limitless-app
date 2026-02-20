@@ -9,6 +9,7 @@ const STORAGE_KEYS = {
   statuses: 'limitless_morning_statuses',
   currentView: 'limitless_current_view',
   creativeBlockStart: 'limitless_creative_block_start',
+  workSessions: 'limitless_work_sessions',
   lastReset: 'limitless_last_reset'
 }
 
@@ -48,6 +49,7 @@ export default function App() {
       localStorage.removeItem(STORAGE_KEYS.statuses)
       localStorage.removeItem(STORAGE_KEYS.currentView)
       localStorage.removeItem(STORAGE_KEYS.creativeBlockStart)
+      localStorage.removeItem(STORAGE_KEYS.workSessions)
       setStatuses({})
       setCurrentView('morning-routine')
       setCreativeBlockStartTime(null)

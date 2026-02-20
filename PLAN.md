@@ -24,10 +24,21 @@
 - [x] State tab — 4 pillars (Sleep, Nutrition, Dopamine, Mood) + composite score
 - [x] Dawn + Muse on opus, daily session reset at 3am
 - [x] Vote categories defined, Muse emits nutritionScore + dopamineQuality
+- [x] All 6 Telegram bots wired (+ Forge, Luna)
+- [x] Architecture hardening: file server single write authority, all agents use curl
+- [x] Integration tests expanded (68/68)
+- [x] App: deep work session UI (WorkSessions.jsx)
+- [x] Mental Badges: 7 badge definitions + 35 exercises (`server/data/badges.json`)
+- [x] Mental Badges: 105 pre-written missions across 5 tiers (`server/data/missions.json`)
+- [x] Mental Badges: XP engine + tier progression + streak multipliers
+- [x] Mental Badges: All endpoints (exercise, mission assign/complete, boss encounters)
+- [x] VF Game: conviction tracking, vote generation (-0.5 inaction), XP bonuses/penalties
+- [x] Badge data: persistent files (no daily reset) for progress + missions
+- [x] Full docs update (DOCS.md sections 14-15)
 
 ---
 
-## 🔧 Current Phase — Backend Completion
+## 🔧 Current Phase — Agent Wiring + UI
 
 ### Priority order: data layer → agents → app → gateway restart
 
