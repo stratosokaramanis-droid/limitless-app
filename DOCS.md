@@ -153,14 +153,14 @@ src/
 | # | ID | Title | Has Pulse Button |
 |---|-----|-------|:---:|
 | 1 | `sleep-screenshot` | 📸 Sleep Cycle | ✅ |
-| 2 | `fitmind` | 🧠 FitMind | ✅ |
-| 3 | `morning-reading` | 📖 Morning Reading | — |
-| 4 | `journaling` | ✍️ Journaling | — |
-| 5 | `review-plan` | 📋 Review Plan | — |
-| 6 | `sunlight-walk` | ☀️ Sunlight Walk | — |
+| 2 | `morning-reading` | 📖 Morning Reading | — |
+| 3 | `journaling` | ✍️ Journaling | — |
+| 4 | `review-plan` | 📋 Review Plan | — |
+| 5 | `sunlight-walk` | ☀️ Sunlight Walk | — |
+| 6 | `fitmind` | 🧠 FitMind | ✅ |
 | 7 | `shower` | 🚿 Cold Shower | — |
 | 8 | `visualization` | 🎯 Visualization | — |
-| 9 | `write-values` | 🔥 Write Your Values | — |
+| 9 | `write-values` | 🔥 Write Values | — |
 
 ---
 
@@ -498,12 +498,18 @@ npm run build
 | 3 | Dawn agent (morning check-in) | ✅ Done |
 | 4 | Muse agent (creative check-in) | ✅ Done |
 | 5 | App scaffold (Vite + React + Tailwind + nav) | ✅ Done |
-| 6 | Morning routine interactive cards | ✅ Done |
+| 6 | Morning routine interactive cards (correct order) | ✅ Done |
 | 7 | Creative block view | ✅ Done |
-| 8 | Express file server (port 3001) | ✅ Done |
-| 9 | State tab — data dashboard | ⬜ TODO |
+| 8 | Express file server (port 3001) + historical snapshots | ✅ Done |
+| 9 | State tab — vertical energy bar | 🔄 Building |
 | 10 | Telegram deep links | ✅ Done |
-| 11 | Cloudflare tunnel (mobile access) | ⬜ TODO |
+| 11 | Cloudflare tunnel (mobile access) | ⬜ Needs Stef |
+| — | Vite proxy (/api/* → localhost:3001) | ✅ Done |
+| — | Integration test suite (41/41 passing) | ✅ Done |
+| — | Daily backup cron (11pm EST) | ✅ Done |
+| — | Security: openclaw.json chmod 600 | ✅ Done |
+| — | Dawn + Muse → opus model | ⬜ Pending restart |
+| — | Dawn + Muse daily session reset | ⬜ Pending restart |
 
 ---
 
