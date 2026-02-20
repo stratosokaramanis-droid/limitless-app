@@ -82,7 +82,7 @@ export default function App() {
 
   const logInteraction = async (itemId, status) => {
     try {
-      await fetch('http://localhost:3001/morning-block-log', {
+      await fetch('/api/morning-block-log', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

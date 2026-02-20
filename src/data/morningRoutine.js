@@ -2,34 +2,34 @@ const morningRoutine = [
   {
     id: 'sleep-screenshot',
     title: '📸 Sleep Cycle',
-    description: 'Take a screenshot of your Sleep Cycle app and send it to Pulse',
-    needsPulse: true
-  },
-  {
-    id: 'fitmind',
-    title: '🧠 FitMind',
-    description: 'Open FitMind, complete your session, screenshot it and send to Pulse',
+    description: 'Take a screenshot of your Sleep Cycle data and send it to Pulse.',
     needsPulse: true
   },
   {
     id: 'morning-reading',
     title: '📖 Morning Reading',
-    description: 'Power of Now / The Creative Act — 20 minutes'
+    description: 'A few pages of Power of Now or The Creative Act.'
   },
   {
     id: 'journaling',
     title: '✍️ Journaling',
-    description: 'Morning pages — write freely, no filter'
+    description: 'One page, ~5 minutes. Write freely, no filter.'
   },
   {
     id: 'review-plan',
     title: '📋 Review Plan',
-    description: "Review today's priorities and adjust if needed"
+    description: 'Review today\'s plan, affirmations, values, and philosophies.'
   },
   {
     id: 'sunlight-walk',
     title: '☀️ Sunlight Walk',
-    description: '10-15 minutes outside, no phone'
+    description: 'Get outside. Walk, think about the day, prepare for visualization.'
+  },
+  {
+    id: 'fitmind',
+    title: '🧠 FitMind',
+    description: 'Complete your mental workout, then screenshot and send to Pulse.',
+    needsPulse: true
   },
   {
     id: 'shower',
@@ -39,12 +39,12 @@ const morningRoutine = [
   {
     id: 'visualization',
     title: '🎯 Visualization',
-    description: '5 minutes. See the day going well. See yourself winning.'
+    description: 'Short-term visualization. See the day clearly.'
   },
   {
     id: 'write-values',
-    title: '🔥 Write Your Values',
-    description: 'Write them by hand. Feel them.'
+    title: '🔥 Write Values',
+    description: 'Write your values, beliefs, and affirmations by hand. Feel them.'
   }
 ]
 

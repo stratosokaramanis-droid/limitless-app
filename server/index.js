@@ -9,6 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
 const PORT = 3001
 const DATA_DIR = path.join(process.env.HOME, '.openclaw/data/shared')
+const HISTORY_DIR = path.join(DATA_DIR, 'history')
 
 app.use(cors())
 app.use(express.json())
@@ -43,6 +44,15 @@ const STUBS = {
   }
 }
 
+const DAILY_FILES = [
+  'morning-block-log',
+  'creative-block-log',
+  'sleep-data',
+  'fitmind-data',
+  'morning-state',
+  'creative-state'
+]
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const filePath = (name) => path.join(DATA_DIR, `${name}.json`)
@@ -62,18 +72,46 @@ const writeJson = (name, data) => {
 
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
+// ─── Historical snapshot ──────────────────────────────────────────────────────
+// Before overwriting a file for a new day, archive yesterday's data
+
+const archiveDay = (dateStr) => {
+  try {
+    const dayDir = path.join(HISTORY_DIR, dateStr)
+    fs.mkdirSync(dayDir, { recursive: true })
+    for (const name of DAILY_FILES) {
+      const src = filePath(name)
+      const dst = path.join(dayDir, `${name}.json`)
+      if (fs.existsSync(src)) {
+        fs.copyFileSync(src, dst)
+      }
+    }
+    // Prune history older than 90 days
+    pruneHistory(90)
+  } catch (err) {
+    console.error('Archive failed:', err.message)
+  }
+}
+
+const pruneHistory = (keepDays) => {
+  try {
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - keepDays)
+    const cutoffStr = cutoff.toISOString().slice(0, 10)
+    const dirs = fs.readdirSync(HISTORY_DIR).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+    for (const dir of dirs) {
+      if (dir < cutoffStr) {
+        fs.rmSync(path.join(HISTORY_DIR, dir), { recursive: true, force: true })
+      }
+    }
+  } catch {
+    // History dir may not exist yet
+  }
+}
+
 // ─── GET endpoints ────────────────────────────────────────────────────────────
 
-const JSON_FILES = [
-  'morning-block-log',
-  'creative-block-log',
-  'sleep-data',
-  'fitmind-data',
-  'morning-state',
-  'creative-state'
-]
-
-JSON_FILES.forEach((name) => {
+DAILY_FILES.forEach((name) => {
   app.get(`/${name}`, (req, res) => {
     res.json(readJson(name))
   })
@@ -86,13 +124,55 @@ app.get('/events', (req, res) => {
     const events = raw
       .split('\n')
       .filter(Boolean)
-      .map((line) => {
-        try { return JSON.parse(line) } catch { return null }
-      })
+      .map((line) => { try { return JSON.parse(line) } catch { return null } })
       .filter(Boolean)
     res.json(events)
   } catch {
     res.json([])
+  }
+})
+
+// ─── GET /history ─────────────────────────────────────────────────────────────
+
+app.get('/history', (req, res) => {
+  try {
+    fs.mkdirSync(HISTORY_DIR, { recursive: true })
+    const dirs = fs.readdirSync(HISTORY_DIR)
+      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
+      .sort()
+      .reverse()
+    res.json(dirs)
+  } catch {
+    res.json([])
+  }
+})
+
+app.get('/history/:date', (req, res) => {
+  const { date } = req.params
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date' })
+
+  const result = {}
+  for (const name of DAILY_FILES) {
+    try {
+      const raw = fs.readFileSync(path.join(HISTORY_DIR, date, `${name}.json`), 'utf8')
+      result[name] = JSON.parse(raw)
+    } catch {
+      result[name] = { ...STUBS[name] }
+    }
+  }
+  res.json(result)
+})
+
+app.get('/history/:date/:file', (req, res) => {
+  const { date, file } = req.params
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date' })
+  if (!DAILY_FILES.includes(file)) return res.status(400).json({ error: 'Unknown file' })
+
+  try {
+    const raw = fs.readFileSync(path.join(HISTORY_DIR, date, `${file}.json`), 'utf8')
+    res.json(JSON.parse(raw))
+  } catch {
+    res.json({ ...STUBS[file] })
   }
 })
 
@@ -105,8 +185,11 @@ app.post('/morning-block-log', (req, res) => {
   const today = todayStr()
   let data = readJson('morning-block-log')
 
-  // Reset if it's a new day
-  if (data.date !== today) {
+  // New day — archive yesterday, start fresh
+  if (data.date && data.date !== today) {
+    archiveDay(data.date)
+    data = { ...STUBS['morning-block-log'], date: today, startedAt: new Date().toISOString() }
+  } else if (!data.date) {
     data = { ...STUBS['morning-block-log'], date: today, startedAt: new Date().toISOString() }
   }
 
@@ -133,20 +216,24 @@ app.post('/creative-block-log', (req, res) => {
   const today = todayStr()
   let data = readJson('creative-block-log')
 
-  if (data.date !== today) {
+  if (data.date && data.date !== today) {
+    archiveDay(data.date)
+    data = { ...STUBS['creative-block-log'], date: today }
+  } else if (!data.date) {
     data = { ...STUBS['creative-block-log'], date: today }
   }
 
   Object.assign(data, req.body)
-  if (!data.date) data.date = today
-
   writeJson('creative-block-log', data)
   res.json({ ok: true })
 })
 
 // ─── Start ────────────────────────────────────────────────────────────────────
 
+fs.mkdirSync(HISTORY_DIR, { recursive: true })
+
 app.listen(PORT, () => {
   console.log(`Limitless file server running on :${PORT}`)
-  console.log(`Data dir: ${DATA_DIR}`)
+  console.log(`Data dir:    ${DATA_DIR}`)
+  console.log(`History dir: ${HISTORY_DIR}`)
 })
