@@ -127,57 +127,29 @@ Tasks are ordered to avoid blocking. Gateway restart tasks go LAST because resta
 
 ---
 
-## State Metric — Energy Bar Spec
+## State Metric — Four Pillars + Composite Score
 
-The energy bar is the ONLY state metric in scope right now.
+**Four sub-metrics, one composed STATE score (0–10):**
 
-**Score calculation (0–10):**
-```
-base = 5.0
+| Metric | Weight | Sources |
+|--------|--------|---------|
+| Sleep | 30% | `sleep-data.json` → hoursSlept + sleepScore |
+| Dopamine | 25% | FitMind completion/score + morning completion rate + `dopamineQuality` from Muse |
+| Mood | 25% | Dawn's emotionalState tag + energyScore + Muse's energyScore |
+| Nutrition | 20% | `nutritionScore` from Muse + nutrition.logged |
 
-sleep_component:
-  if sleep-data exists:
-    hours_score = clamp(hoursSlept / 8, 0, 1) * 10   # 8h = perfect
-    quality_score = sleepScore / 100 * 10             # direct if available
-    sleep_contribution = (hours_score * 0.5 + quality_score * 0.5) * 2.5
-  else: sleep_contribution = 0  (no data)
+STATE = weighted average of whichever sub-metrics have data. Missing metrics excluded from weighting (not zeroed).
 
-fitmind_component:
-  if fitmind-data exists and workoutCompleted:
-    fitmind_contribution = (score / 100 * 10) * 1.5
-  else: fitmind_contribution = 0
+**New fields in `creative-state.json`:**
+- `nutritionScore` (1–10 or null) — Muse's honest meal quality score
+- `dopamineQuality` (1–10 or null) — Muse's assessment of activity quality
 
-morning_block_component:
-  if morning-block-log exists:
-    ratio = completedCount / (completedCount + skippedCount)
-    morning_block_contribution = ratio * 1.0
-  else: morning_block_contribution = 0
-
-morning_state_component:
-  if morning-state exists:
-    morning_state_contribution = (energyScore * 0.5 + mentalClarity * 0.3 + overallMorningScore * 0.2) * 0.35
-  else: morning_state_contribution = 0
-
-creative_component:
-  if creative-state exists:
-    nutrition_bonus = nutrition.logged ? 0.5 : 0
-    creative_contribution = (energyScore * 0.8 + nutrition_bonus) * 0.15
-  else: creative_contribution = 0
-
-final_score = clamp(
-  sleep_contribution + fitmind_contribution + morning_block_contribution +
-  morning_state_contribution + creative_contribution,
-  0, 10
-)
-```
-
-**Visual:**
-- Tall vertical bar, left-center of the State tab
-- Empty (gray) when no data
-- Fills from bottom up
-- Color: `#4A9EFF` (cool blue) at 0–4, `#7ED4A5` (green) at 5–7, `#FFD166` (warm) at 8–10
-- Number label at the top of the fill
-- Right side: stat cards (sleep hours, FitMind score, morning score, day priority, mood)
+**Visual layout:**
+- Left: tall vertical STATE bar with composed score number
+- Right: 4 horizontal mini-bars (Sleep, Nutrition, Dopamine, Mood) with individual scores
+- Color: `#4A9EFF` blue (low) → `#7ED4A5` green (mid) → `#FFD166` warm (high)
+- Bottom: stat pills (hours slept, FitMind score, morning completion, overall morning score, mood tag)
+- No data state: empty bar + "Complete your morning to see your state."
 
 ---
 

@@ -1,88 +1,174 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 
-const API_ENDPOINTS = [
-  '/api/morning-block-log',
-  '/api/sleep-data',
-  '/api/fitmind-data',
-  '/api/morning-state',
-  '/api/creative-state'
-]
+// ─── Score calculations ───────────────────────────────────────────────────────
 
-const EMPTY = {
-  morningLog: { completedCount: 0, skippedCount: 0 },
-  sleepData: { hoursSlept: null, sleepScore: null },
-  fitmindData: { workoutCompleted: null, score: null },
-  morningState: { energyScore: null, mentalClarity: null, overallMorningScore: null, dayPriority: null },
-  creativeState: { energyScore: null, nutrition: null }
+const MOOD_TAG_SCORES = {
+  'fired-up': 9.5, 'energized': 9, 'grounded': 8, 'focused': 8,
+  'calm': 7, 'neutral': 6, 'tired': 4.5, 'flat': 4,
+  'foggy': 4, 'anxious': 4.5, 'stressed': 3.5, 'overwhelmed': 3
 }
 
-function calcEnergyScore(sleepData, fitmindData, morningLog, morningState, creativeState) {
-  let score = 0
-  let hasAnyData = false
+function calcSleep(sleepData) {
+  if (sleepData?.hoursSlept == null) return null
+  const hoursScore = Math.min(sleepData.hoursSlept / 8, 1) * 10
+  const qualityScore = sleepData.sleepScore != null
+    ? sleepData.sleepScore / 10
+    : hoursScore
+  return Math.min(Math.max(hoursScore * 0.6 + qualityScore * 0.4, 0), 10)
+}
 
-  if (sleepData.hoursSlept !== null) {
-    hasAnyData = true
-    const hoursScore = Math.min(sleepData.hoursSlept / 8, 1) * 10
-    const qualityScore = sleepData.sleepScore !== null ? (sleepData.sleepScore / 100) * 10 : hoursScore
-    score += ((hoursScore * 0.5) + (qualityScore * 0.5)) * 0.30
+function calcNutrition(creativeState) {
+  if (!creativeState?.nutrition?.logged) return null
+  if (creativeState.nutritionScore != null) return creativeState.nutritionScore
+  return 6.5 // logged but no quality score yet — neutral positive
+}
+
+function calcDopamine(fitmindData, morningLog, creativeState) {
+  let score = 5.0
+  let hasData = false
+
+  if (fitmindData?.workoutCompleted != null) {
+    hasData = true
+    const fitBoost = fitmindData.workoutCompleted
+      ? (fitmindData.score != null ? (fitmindData.score / 100) * 4 : 2.5)
+      : -1
+    score += fitBoost - 1.5
   }
 
-  if (fitmindData.workoutCompleted !== null) {
-    hasAnyData = true
-    const fitScore = fitmindData.score !== null ? (fitmindData.score / 100) * 10 : (fitmindData.workoutCompleted ? 7 : 3)
-    score += fitScore * 0.15
-  }
-
-  const total = (morningLog.completedCount || 0) + (morningLog.skippedCount || 0)
+  const total = (morningLog?.completedCount || 0) + (morningLog?.skippedCount || 0)
   if (total > 0) {
-    hasAnyData = true
-    score += (morningLog.completedCount / total) * 10 * 0.10
+    hasData = true
+    const ratio = morningLog.completedCount / total
+    score += (ratio - 0.5) * 2
   }
 
-  if (morningState.energyScore !== null) {
-    hasAnyData = true
-    const mScore = (morningState.energyScore * 0.5) + (morningState.mentalClarity * 0.3) + (morningState.overallMorningScore * 0.2)
-    score += mScore * 0.35
+  if (creativeState?.dopamineQuality != null) {
+    hasData = true
+    score += (creativeState.dopamineQuality - 5) * 0.4
+  } else if (creativeState?.energyScore != null) {
+    hasData = true
+    score += (creativeState.energyScore - 5) * 0.2
   }
 
-  if (creativeState.energyScore !== null) {
-    hasAnyData = true
-    const nutritionBonus = creativeState.nutrition?.logged ? 0.5 : 0
-    score += (creativeState.energyScore * 0.8 + nutritionBonus) * 0.15
-  }
-
-  if (!hasAnyData) return null
+  if (!hasData) return null
   return Math.min(Math.max(score, 0), 10)
 }
 
-function getBarColor(pct) {
+function calcMood(morningState, creativeState) {
+  const values = []
+
+  const tagScore = MOOD_TAG_SCORES[morningState?.emotionalState]
+  if (tagScore != null) values.push(tagScore)
+  if (morningState?.energyScore != null) values.push(morningState.energyScore)
+  if (creativeState?.energyScore != null) values.push(creativeState.energyScore * 1.2) // weight later-day read more
+
+  if (values.length === 0) return null
+  const avg = values.reduce((a, b) => a + b, 0) / values.length
+  return Math.min(Math.max(avg, 0), 10)
+}
+
+function calcState(sleep, nutrition, dopamine, mood) {
+  const weights = { sleep: 0.30, nutrition: 0.20, dopamine: 0.25, mood: 0.25 }
+  const scores = { sleep, nutrition, dopamine, mood }
+  let sum = 0, totalW = 0
+  for (const [k, w] of Object.entries(weights)) {
+    if (scores[k] != null) { sum += scores[k] * w; totalW += w }
+  }
+  if (totalW === 0) return null
+  return Math.min(Math.max(sum / totalW, 0), 10)
+}
+
+// ─── Bar color ────────────────────────────────────────────────────────────────
+
+function barColor(pct) {
+  if (pct == null) return '#2a2a2a'
   if (pct < 0.4) return '#4A9EFF'
   if (pct < 0.7) return '#7ED4A5'
   return '#FFD166'
 }
 
-function Pill({ children }) {
+// ─── Components ───────────────────────────────────────────────────────────────
+
+function MiniBar({ label, score, delay = 0 }) {
+  const hasScore = score != null
+  const pct = hasScore ? score / 10 : 0
+  const color = barColor(hasScore ? pct : null)
+
   return (
-    <div className="flex items-center gap-1.5 rounded-lg bg-white/[0.06] px-3 py-2 text-sm">
-      {children}
+    <div className="flex items-center gap-3">
+      <span className="w-20 text-right text-xs uppercase tracking-[0.15em] text-white/40">
+        {label}
+      </span>
+      <div className="relative h-1.5 flex-1 rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
+        <motion.div
+          initial={{ width: 0 }}
+          animate={{ width: `${pct * 100}%` }}
+          transition={{ duration: 0.9, delay, ease: 'easeOut' }}
+          className="absolute left-0 top-0 h-full rounded-full"
+          style={{ background: color }}
+        />
+      </div>
+      <span className="w-8 text-xs tabular-nums text-white/60">
+        {hasScore ? score.toFixed(1) : '—'}
+      </span>
     </div>
   )
 }
 
+function BigBar({ score, height = 260 }) {
+  const hasScore = score != null
+  const pct = hasScore ? score / 10 : 0
+  const color = barColor(hasScore ? pct : null)
+
+  return (
+    <div
+      className="relative overflow-hidden"
+      style={{
+        width: 44,
+        height,
+        background: 'rgba(255,255,255,0.06)',
+        borderRadius: 6
+      }}
+    >
+      <motion.div
+        initial={{ height: 0 }}
+        animate={{ height: pct * height }}
+        transition={{ duration: 1.2, ease: 'easeOut' }}
+        className="absolute bottom-0 left-0 right-0"
+        style={{
+          background: hasScore
+            ? `linear-gradient(to top, ${barColor(0)}, ${color})`
+            : 'transparent',
+          borderRadius: '6px 6px 0 0'
+        }}
+      />
+    </div>
+  )
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export default function StateTab() {
-  const [data, setData] = useState(null)
+  const [raw, setRaw] = useState(null)
   const [loading, setLoading] = useState(true)
 
   const fetchAll = useCallback(async () => {
     try {
-      const results = await Promise.allSettled(API_ENDPOINTS.map(u => fetch(u).then(r => r.ok ? r.json() : null)))
-      const [morningLog, sleepData, fitmindData, morningState, creativeState] = results.map(
-        (r, i) => r.status === 'fulfilled' && r.value ? r.value : Object.values(EMPTY)[i]
+      const endpoints = [
+        '/api/sleep-data',
+        '/api/fitmind-data',
+        '/api/morning-block-log',
+        '/api/morning-state',
+        '/api/creative-state'
+      ]
+      const results = await Promise.allSettled(endpoints.map(u => fetch(u).then(r => r.ok ? r.json() : null)))
+      const [sleepData, fitmindData, morningLog, morningState, creativeState] = results.map(
+        r => (r.status === 'fulfilled' ? r.value : null) ?? {}
       )
-      setData({ morningLog, sleepData, fitmindData, morningState, creativeState })
+      setRaw({ sleepData, fitmindData, morningLog, morningState, creativeState })
     } catch {
-      setData({ ...EMPTY })
+      setRaw({})
     } finally {
       setLoading(false)
     }
@@ -96,82 +182,97 @@ export default function StateTab() {
 
   if (loading) {
     return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-white/60" />
+      <div className="flex h-full items-center justify-center">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-white/20 border-t-white/60" />
       </div>
     )
   }
 
-  const { sleepData, fitmindData, morningLog, morningState, creativeState } = data
-  const score = calcEnergyScore(sleepData, fitmindData, morningLog, morningState, creativeState)
-  const hasScore = score !== null
-  const fillPct = hasScore ? score / 10 : 0
-  const total = (morningLog.completedCount || 0) + (morningLog.skippedCount || 0)
+  const { sleepData, fitmindData, morningLog, morningState, creativeState } = raw
 
-  const BAR_H = 280
-  const BAR_W = 48
+  const sleep = calcSleep(sleepData)
+  const nutrition = calcNutrition(creativeState)
+  const dopamine = calcDopamine(fitmindData, morningLog, creativeState)
+  const mood = calcMood(morningState, creativeState)
+  const state = calcState(sleep, nutrition, dopamine, mood)
+
+  const hasAnyData = [sleep, nutrition, dopamine, mood].some(s => s != null)
 
   return (
-    <div className="flex h-full flex-col items-center px-6 py-8">
+    <div className="flex h-full flex-col px-6 py-8">
       {/* Header */}
-      <p className="mb-8 self-start text-xs font-semibold uppercase tracking-[0.2em] text-white/40">
+      <p className="mb-8 text-xs font-semibold uppercase tracking-[0.2em] text-white/40">
         State
       </p>
 
-      {/* Bar + score */}
-      <div className="mb-8 flex items-end gap-5">
-        {/* Vertical bar */}
-        <div
-          className="relative overflow-hidden rounded-md"
-          style={{ width: BAR_W, height: BAR_H, background: 'rgba(255,255,255,0.08)' }}
-        >
-          <motion.div
-            initial={{ height: 0 }}
-            animate={{ height: fillPct * BAR_H }}
-            transition={{ duration: 1.2, ease: 'easeOut' }}
-            className="absolute bottom-0 left-0 right-0"
-            style={{
-              borderRadius: hasScore ? '6px 6px 0 0' : 0,
-              background: hasScore
-                ? `linear-gradient(to top, #4A9EFF, ${getBarColor(fillPct)})`
-                : 'transparent'
-            }}
-          />
+      {/* Main layout: big bar + metrics */}
+      <div className="flex flex-1 gap-6">
+        {/* Left: big state bar */}
+        <div className="flex flex-col items-center gap-3">
+          <BigBar score={state} height={240} />
+          <div className="text-center">
+            <span className="block text-2xl font-bold tabular-nums text-white">
+              {state != null ? state.toFixed(1) : '—'}
+            </span>
+            <span className="block text-[10px] uppercase tracking-[0.2em] text-white/30">
+              state
+            </span>
+          </div>
         </div>
 
-        {/* Score label */}
-        <div
-          className="flex flex-col"
-          style={{ marginBottom: hasScore ? fillPct * BAR_H * 0.45 : BAR_H * 0.4 }}
-        >
-          {hasScore ? (
-            <>
-              <span className="text-4xl font-bold tabular-nums text-white">
-                {score.toFixed(1)}
-              </span>
-              <span className="mt-1 text-sm text-white/40">Today's state</span>
-            </>
-          ) : (
-            <span className="max-w-[140px] text-sm leading-relaxed text-white/30">
+        {/* Right: 4 mini metrics */}
+        <div className="flex flex-1 flex-col justify-center gap-5">
+          {!hasAnyData ? (
+            <p className="text-sm leading-relaxed text-white/30">
               Complete your morning to see your state.
-            </span>
+            </p>
+          ) : (
+            <>
+              <MiniBar label="Sleep" score={sleep} delay={0.1} />
+              <MiniBar label="Nutrition" score={nutrition} delay={0.2} />
+              <MiniBar label="Dopamine" score={dopamine} delay={0.3} />
+              <MiniBar label="Mood" score={mood} delay={0.4} />
+            </>
+          )}
+
+          {/* Day priority from Dawn */}
+          {morningState?.dayPriority && (
+            <p className="mt-4 text-sm italic leading-relaxed text-white/40">
+              "{morningState.dayPriority}"
+            </p>
           )}
         </div>
       </div>
 
-      {/* Stat pills */}
-      <div className="grid w-full max-w-[280px] grid-cols-2 gap-2.5">
-        <Pill>😴 {sleepData.hoursSlept !== null ? `${sleepData.hoursSlept}h` : '—'}</Pill>
-        <Pill>🧠 {fitmindData.score !== null ? fitmindData.score : '—'}</Pill>
-        <Pill>⚡ {total > 0 ? `${morningLog.completedCount}/${total}` : '—'}</Pill>
-        <Pill>🎯 {morningState.overallMorningScore !== null ? morningState.overallMorningScore : '—'}</Pill>
-      </div>
-
-      {/* Day priority */}
-      {morningState.dayPriority && (
-        <p className="mt-6 max-w-[280px] text-center text-sm italic leading-relaxed text-white/50">
-          "{morningState.dayPriority}"
-        </p>
+      {/* Bottom stat pills */}
+      {hasAnyData && (
+        <div className="mt-6 flex flex-wrap gap-2">
+          {sleepData?.hoursSlept != null && (
+            <span className="rounded-md bg-white/[0.06] px-3 py-1.5 text-xs text-white/60">
+              😴 {sleepData.hoursSlept}h
+            </span>
+          )}
+          {fitmindData?.score != null && (
+            <span className="rounded-md bg-white/[0.06] px-3 py-1.5 text-xs text-white/60">
+              🧠 {fitmindData.score}
+            </span>
+          )}
+          {morningLog?.completedCount != null && (
+            <span className="rounded-md bg-white/[0.06] px-3 py-1.5 text-xs text-white/60">
+              ⚡ {morningLog.completedCount}/{(morningLog.completedCount || 0) + (morningLog.skippedCount || 0)}
+            </span>
+          )}
+          {morningState?.overallMorningScore != null && (
+            <span className="rounded-md bg-white/[0.06] px-3 py-1.5 text-xs text-white/60">
+              🎯 {morningState.overallMorningScore}
+            </span>
+          )}
+          {morningState?.emotionalState && (
+            <span className="rounded-md bg-white/[0.06] px-3 py-1.5 text-xs text-white/60">
+              {morningState.emotionalState}
+            </span>
+          )}
+        </div>
       )}
     </div>
   )

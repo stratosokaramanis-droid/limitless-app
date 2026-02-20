@@ -40,6 +40,7 @@ const STUBS = {
   'creative-state': {
     date: null, activities: [], energyScore: null, creativeOutput: null,
     insights: [], nutrition: { logged: false, meal: null, notes: '' },
+    nutritionScore: null, dopamineQuality: null,
     moodShift: null, rawNotes: ''
   }
 }
