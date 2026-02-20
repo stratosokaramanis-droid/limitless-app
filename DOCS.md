@@ -389,17 +389,20 @@ Errors are caught silently (`console.log`) — app works offline from the file s
 
 ---
 
-## 6. Express File Server (Step 8 — TODO)
+## 6. Express File Server (Step 8 — ✅ Done)
 
 **Port:** 3001  
-**Location:** `~/limitless-app/server/` (to be created)
+**Location:** `~/limitless-app/server/index.js`  
+**Start:** `npm run server`  
+**Start with app:** `npm run dev:all` (runs Vite on 3000 + server on 3001 concurrently)
 
 ### What it does
 - Serves the shared JSON files as read-only GET endpoints
-- Accepts POST to `/morning-block-log` and writes to the shared JSON file
-- CORS enabled (app on 3000 needs to hit 3001)
+- Accepts POST to update `morning-block-log.json` and `creative-block-log.json`
+- CORS enabled (app on 3000 hits 3001 freely)
+- Returns empty stubs (never crashes) when files are missing or corrupt
 
-### Planned endpoints
+### Endpoints
 ```
 GET  /morning-block-log    → ~/.openclaw/data/shared/morning-block-log.json
 GET  /creative-block-log   → ~/.openclaw/data/shared/creative-block-log.json
@@ -407,11 +410,17 @@ GET  /sleep-data           → ~/.openclaw/data/shared/sleep-data.json
 GET  /fitmind-data         → ~/.openclaw/data/shared/fitmind-data.json
 GET  /morning-state        → ~/.openclaw/data/shared/morning-state.json
 GET  /creative-state       → ~/.openclaw/data/shared/creative-state.json
-GET  /events               → ~/.openclaw/data/shared/events.jsonl (as JSON array)
+GET  /events               → events.jsonl parsed as JSON array
 
-POST /morning-block-log    → appends item to morning-block-log.json
-POST /creative-block-log   → writes creative-block-log.json
+POST /morning-block-log    → { itemId, status, timestamp }
+                             Resets on new day, updates item, recounts done/skipped
+
+POST /creative-block-log   → { status?, startedAt?, completedAt? }
+                             Merges into file, resets on new day
 ```
+
+### Error handling
+Every read is wrapped in try/catch — missing file or bad JSON returns the stub silently. Server never crashes on bad data.
 
 ---
 
@@ -466,7 +475,7 @@ openclaw agents list --bindings
 | 5 | App scaffold (Vite + React + Tailwind + nav shell) | ✅ Done |
 | 6 | Morning routine interactive cards | ✅ Done |
 | 7 | Creative block view | ✅ Done |
-| 8 | Express file server (port 3001) | ⬜ TODO |
+| 8 | Express file server (port 3001) | ✅ Done |
 | 9 | State tab — data dashboard | ⬜ TODO |
 | 10 | Wire Telegram deep links | ✅ Done (bots confirmed) |
 | 11 | Cloudflare tunnel for mobile access | ⬜ TODO |
