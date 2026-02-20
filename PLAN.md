@@ -107,18 +107,12 @@ Tasks are ordered to avoid blocking. Gateway restart tasks go LAST because resta
 ### Phase 2 — Gateway Restart Required (Do Last)
 
 **2.1 Upgrade Dawn + Muse to opus**
-- Change model from `anthropic/claude-sonnet-4-6` to `anthropic/claude-opus-4-6` in openclaw.json
-- Reason: check-in conversations require emotional nuance — opus noticeably better than sonnet
+- ✅ Done — morning-checkin and creative-checkin now on `anthropic/claude-opus-4-6`
 - Pulse stays on sonnet (vision extraction, doesn't need conversational depth)
-- **Requires gateway restart → do after all other tasks**
-- Status: ⬜ TODO
 
-**2.2 Add daily session reset for Dawn + Muse**
-- Dawn and Muse should start fresh each day — no bleed from yesterday's conversation
-- Add session reset config to each agent: `session.reset.mode: "daily"`, `atHour: 3`
-- Matches the app's 3am daily reset
-- **Requires gateway restart → do after all other tasks**
-- Status: ⬜ TODO
+**2.2 Add daily session reset**
+- ✅ Done — global `session.reset.mode: "daily", atHour: 3` added to config
+- Also added explicit session context rules to Dawn and Muse SOUL.md files
 
 ---
 

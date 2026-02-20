@@ -501,15 +501,15 @@ npm run build
 | 6 | Morning routine interactive cards (correct order) | ✅ Done |
 | 7 | Creative block view | ✅ Done |
 | 8 | Express file server (port 3001) + historical snapshots | ✅ Done |
-| 9 | State tab — vertical energy bar | 🔄 Building |
+| 9 | State tab — vertical energy bar | ✅ Done |
 | 10 | Telegram deep links | ✅ Done |
 | 11 | Cloudflare tunnel (mobile access) | ⬜ Needs Stef |
 | — | Vite proxy (/api/* → localhost:3001) | ✅ Done |
 | — | Integration test suite (41/41 passing) | ✅ Done |
 | — | Daily backup cron (11pm EST) | ✅ Done |
 | — | Security: openclaw.json chmod 600 | ✅ Done |
-| — | Dawn + Muse → opus model | ⬜ Pending restart |
-| — | Dawn + Muse daily session reset | ⬜ Pending restart |
+| — | Dawn + Muse → opus model | ✅ Done |
+| — | Global daily session reset at 3am | ✅ Done |
 
 ---
 
