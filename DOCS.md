@@ -744,6 +744,24 @@ When a new day triggers a reset, yesterday's data is archived:
 
 OpenClaw cron job runs at 11pm EST: copies entire `~/.openclaw/data/shared/` to `~/.openclaw/data/backups/YYYY-MM-DD/`. Keeps last 30 days.
 
+### Cloudflare Tunnel (Phone Access)
+
+Vite is configured with `port: 3000`, `host: true`, and `allowedHosts: 'all'`.
+
+To expose the app to your phone, run in a separate terminal:
+```bash
+cloudflared tunnel --url http://localhost:3000
+```
+
+It outputs a URL like `https://something.trycloudflare.com` — open on your phone.
+
+**Three things need to be running:**
+1. `npm run dev:all` (app + file server)
+2. `openclaw gateway start` (agents — already running)
+3. `cloudflared tunnel --url http://localhost:3000` (tunnel)
+
+Note: quick tunnels get a random URL each time. For a permanent URL, create a named tunnel with a Cloudflare account.
+
 ### Security
 
 - `~/.openclaw/openclaw.json` is `chmod 600` — contains bot tokens and API keys
@@ -1037,7 +1055,7 @@ Each boss encounter: +25 XP for the related badge. Stored in `boss-encounters.js
 | App: Badges tab (badge progress UI) | ⬜ TODO |
 | Agent wiring: VF Game in Luna SOUL.md | ⬜ TODO |
 | Agent wiring: Badge exercises in agent SOULs | ⬜ TODO |
-| Cloudflare tunnel (phone access) | ⬜ Needs Stef |
+| Cloudflare tunnel (phone access) | ⬜ Config ready, run manually (see below) |
 
 ---
 
