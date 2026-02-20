@@ -35,7 +35,7 @@ There is no traditional database. The backend is a set of **shared JSON files** 
                                  │
                     ┌────────────▼──────────────────┐
                     │   React Dev Server (Vite)      │
-                    │   localhost:3000                │
+                    │   localhost:3002                │
                     │   Proxy: /api/* → :3001         │
                     └────────────┬──────────────────┘
                                  │
@@ -618,7 +618,7 @@ The State tab shows four sub-metrics and one composed STATE score.
 ## 10. The React App
 
 **Location:** `~/limitless-app/`  
-**Port:** 3000  
+**Port:** 3002  
 **Stack:** Vite + React 18 + Tailwind CSS + Framer Motion
 
 ### Navigation
@@ -713,7 +713,7 @@ openclaw gateway start
 # Start app + file server
 cd ~/limitless-app
 npm run dev:all
-# → App: http://localhost:3000
+# → App: http://localhost:3002
 # → File server: http://localhost:3001
 
 # Or individually:
@@ -758,27 +758,22 @@ OpenClaw cron job runs at 11pm EST: copies entire `~/.openclaw/data/shared/` to 
 
 ### Cloudflare Tunnel (Phone Access)
 
-Vite is configured with `port: 3000`, `host: true`, and `allowedHosts: 'all'`.
+Vite is configured with `port: 3002`, `host: true`, and `allowedHosts: ['the-limitless-system.work', 'localhost']`.
 
-To expose the app to your phone, run in a separate terminal:
-```bash
-cloudflared tunnel --url http://localhost:3000
-```
-
-It outputs a URL like `https://something.trycloudflare.com` — open on your phone.
+Named tunnel configured: `the-limitless-system.work` → `localhost:3002`
 
 **Three things need to be running:**
-1. `npm run dev:all` (app + file server)
+1. `npm run dev:all` (app on :3002 + file server on :3001)
 2. `openclaw gateway start` (agents — already running)
-3. `cloudflared tunnel --url http://localhost:3000` (tunnel)
+3. `cloudflared` tunnel service (routes the-limitless-system.work → localhost:3002)
 
-Note: quick tunnels get a random URL each time. For a permanent URL, create a named tunnel with a Cloudflare account.
+**Access:** https://the-limitless-system.work
 
 ### Security
 
 - `~/.openclaw/openclaw.json` is `chmod 600` — contains bot tokens and API keys
 - File server has no authentication — only accessible locally (port 3001 never exposed)
-- Cloudflare tunnel points at port 3000 only — file server is proxied via Vite (`/api/*`)
+- Cloudflare tunnel points at port 3002 only — file server is proxied via Vite (`/api/*`)
 - Bot tokens are **never** in the git repo
 
 ---
@@ -1069,7 +1064,7 @@ Each boss encounter: +25 XP for the related badge. Stored in `boss-encounters.js
 | Agent wiring: VF Game in Luna SOUL.md | ✅ |
 | Agent wiring: Badge exercises in all agent SOULs | ✅ |
 | Agent wiring: Mission management in Forge + Luna | ✅ |
-| Vite config: port 3000, host, allowedHosts | ✅ |
+| Vite config: port 3002, host, allowedHosts | ✅ |
 | Cloudflare tunnel | ✅ Config ready, run manually (see Infrastructure) |
 
 ---
