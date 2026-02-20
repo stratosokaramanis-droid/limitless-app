@@ -61,7 +61,7 @@ function SessionDots({ phase, session }) {
   )
 }
 
-export default function WorkSessions() {
+export default function WorkSessions({ onEnterNightMode }) {
   const [local, setLocal] = useState(() => {
     try {
       const raw = localStorage.getItem(LS_KEY)
@@ -166,6 +166,12 @@ export default function WorkSessions() {
         >
           💬 Review with Forge →
         </a>
+        <button
+          onClick={onEnterNightMode}
+          className="text-xs uppercase tracking-[0.25em] text-gray-500"
+        >
+          Enter Night Mode
+        </button>
       </div>
     )
   }

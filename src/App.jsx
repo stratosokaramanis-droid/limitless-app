@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import BottomNav from './components/BottomNav.jsx'
 import MorningRoutine from './components/MorningRoutine.jsx'
-import PlaceholderTab from './components/PlaceholderTab.jsx'
+import BadgesTab from './components/BadgesTab.jsx'
 import StateTab from './components/StateTab.jsx'
+import StatsTab from './components/StatsTab.jsx'
 import morningRoutine from './data/morningRoutine.js'
 
 const STORAGE_KEYS = {
@@ -10,6 +11,7 @@ const STORAGE_KEYS = {
   currentView: 'limitless_current_view',
   creativeBlockStart: 'limitless_creative_block_start',
   workSessions: 'limitless_work_sessions',
+  nightRoutine: 'limitless_night_routine',
   lastReset: 'limitless_last_reset'
 }
 
@@ -50,6 +52,7 @@ export default function App() {
       localStorage.removeItem(STORAGE_KEYS.currentView)
       localStorage.removeItem(STORAGE_KEYS.creativeBlockStart)
       localStorage.removeItem(STORAGE_KEYS.workSessions)
+      localStorage.removeItem(STORAGE_KEYS.nightRoutine)
       setStatuses({})
       setCurrentView('morning-routine')
       setCreativeBlockStartTime(null)
@@ -151,8 +154,8 @@ export default function App() {
           <div className="h-full border border-white/10 bg-card shadow-glow">
             {activeTab === 'today' && renderToday()}
             {activeTab === 'state' && <StateTab />}
-            {activeTab === 'badges' && <PlaceholderTab title="Badges" />}
-            {activeTab === 'stats' && <PlaceholderTab title="Stats" />}
+            {activeTab === 'badges' && <BadgesTab />}
+            {activeTab === 'stats' && <StatsTab />}
           </div>
         </main>
       </div>

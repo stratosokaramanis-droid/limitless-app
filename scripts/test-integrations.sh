@@ -64,7 +64,7 @@ fi
 
 section "Shared Data Layer"
 
-for file in morning-block-log creative-block-log sleep-data fitmind-data morning-state creative-state work-sessions votes night-routine midday-checkin events; do
+for file in morning-block-log creative-block-log sleep-data fitmind-data morning-state creative-state work-sessions votes night-routine midday-checkin badge-daily vf-game events; do
   if [[ "$file" == "events" ]]; then
     target="$DATA_DIR/events.jsonl"
   else
@@ -78,7 +78,7 @@ for file in morning-block-log creative-block-log sleep-data fitmind-data morning
 done
 
 # Validate JSON files
-for file in morning-block-log creative-block-log sleep-data fitmind-data morning-state creative-state work-sessions votes night-routine midday-checkin; do
+for file in morning-block-log creative-block-log sleep-data fitmind-data morning-state creative-state work-sessions votes night-routine midday-checkin badge-daily vf-game; do
   if python3 -m json.tool "$DATA_DIR/${file}.json" &>/dev/null; then
     pass "$file.json is valid JSON"
   else
@@ -237,6 +237,176 @@ assert '$TEST_ITEM' in ids, 'item not found in file'
     pass "Field injection blocked (whitelist working)"
   else
     fail "Field injection NOT blocked — whitelist broken"
+  fi
+
+  # ── Badge system tests ──────────────────────────────────────────────────────
+
+  # GET /badges
+  BADGES_RESP=$(curl -sf "$API/badges" 2>/dev/null)
+  BADGE_COUNT=$(echo "$BADGES_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('badges',[])))" 2>/dev/null)
+  if [[ "$BADGE_COUNT" == "7" ]]; then
+    pass "GET /badges returns 7 badges"
+  else
+    fail "GET /badges returned $BADGE_COUNT badges (expected 7)"
+  fi
+
+  # GET /badges/missions
+  MISSIONS_RESP=$(curl -sf "$API/badges/missions" 2>/dev/null)
+  MISSION_COUNT=$(echo "$MISSIONS_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('missions',[])))" 2>/dev/null)
+  if [[ "$MISSION_COUNT" == "105" ]]; then
+    pass "GET /badges/missions returns 105 missions"
+  else
+    fail "GET /badges/missions returned $MISSION_COUNT missions (expected 105)"
+  fi
+
+  # GET /badge-progress
+  BP_RESP=$(curl -sf "$API/badge-progress" 2>/dev/null)
+  if echo "$BP_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); assert len(d.get('badges',{})) == 7" 2>/dev/null; then
+    pass "GET /badge-progress returns 7 badge progress entries"
+  else
+    fail "GET /badge-progress missing badges"
+  fi
+
+  # POST /badge-progress/exercise
+  EX_RESULT=$(curl -sf -X POST "$API/badge-progress/exercise" \
+    -H "Content-Type: application/json" \
+    -d '{"badgeSlug":"rdf","exerciseId":"rdf-taste-training"}' 2>/dev/null)
+  if echo "$EX_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') and d.get('xpGained',0) > 0" 2>/dev/null; then
+    pass "POST /badge-progress/exercise returns XP"
+  else
+    fail "POST /badge-progress/exercise failed"
+  fi
+
+  # POST /badge-progress/exercise — invalid badge rejected (returns 400)
+  EX_BAD_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API/badge-progress/exercise" \
+    -H "Content-Type: application/json" \
+    -d '{"badgeSlug":"fake","exerciseId":"fake"}' 2>/dev/null)
+  if [[ "$EX_BAD_CODE" == "400" ]]; then
+    pass "POST /badge-progress/exercise rejects invalid badge (400)"
+  else
+    fail "POST /badge-progress/exercise returned $EX_BAD_CODE (expected 400)"
+  fi
+
+  # POST /badge-missions/assign
+  ASSIGN_RESULT=$(curl -sf -X POST "$API/badge-missions/assign" \
+    -H "Content-Type: application/json" \
+    -d '{}' 2>/dev/null)
+  ACTIVE_COUNT=$(echo "$ASSIGN_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('active',[])))" 2>/dev/null)
+  if [[ "$ACTIVE_COUNT" == "7" ]]; then
+    pass "POST /badge-missions/assign assigns 7 missions"
+  else
+    fail "POST /badge-missions/assign assigned $ACTIVE_COUNT missions (expected 7)"
+  fi
+
+  # POST /badge-missions/complete
+  FIRST_MISSION=$(curl -sf "$API/badge-missions" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['active'][0]['missionId'] if d.get('active') else '')" 2>/dev/null)
+  if [[ -n "$FIRST_MISSION" ]]; then
+    MC_RESULT=$(curl -sf -X POST "$API/badge-missions/complete" \
+      -H "Content-Type: application/json" \
+      -d "{\"missionId\":\"$FIRST_MISSION\",\"success\":true}" 2>/dev/null)
+    if echo "$MC_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') and d.get('xpGained',0) > 0" 2>/dev/null; then
+      pass "POST /badge-missions/complete returns XP"
+    else
+      fail "POST /badge-missions/complete failed"
+    fi
+  else
+    fail "No active mission to complete"
+  fi
+
+  # GET /badge-daily
+  BD_RESP=$(curl -sf "$API/badge-daily" 2>/dev/null)
+  if echo "$BD_RESP" | python3 -m json.tool &>/dev/null; then
+    pass "GET /badge-daily returns valid JSON"
+  else
+    fail "GET /badge-daily failed"
+  fi
+
+  # GET /badge-missions
+  BM_RESP=$(curl -sf "$API/badge-missions" 2>/dev/null)
+  if echo "$BM_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); assert 'active' in d and 'completed' in d" 2>/dev/null; then
+    pass "GET /badge-missions has active + completed"
+  else
+    fail "GET /badge-missions missing structure"
+  fi
+
+  # ── VF Game tests ──────────────────────────────────────────────────────────
+
+  # GET /vf-game (after POST to ensure server-generated stub)
+  curl -sf -X POST "$API/vf-game" -H "Content-Type: application/json" -d '{"presenceScore":5}' > /dev/null 2>&1
+  VF_RESP=$(curl -sf "$API/vf-game" 2>/dev/null)
+  VF_AFF=$(echo "$VF_RESP" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('affirmations',[])))" 2>/dev/null)
+  if [[ "$VF_AFF" == "7" ]]; then
+    pass "GET /vf-game returns 7 affirmations"
+  else
+    fail "GET /vf-game returned $VF_AFF affirmations (expected 7)"
+  fi
+
+  # POST /vf-game
+  VF_POST=$(curl -sf -X POST "$API/vf-game" \
+    -H "Content-Type: application/json" \
+    -d '{"presenceScore":8,"effortLevel":7,"affirmations":[{"badgeSlug":"rdf","convictionScore":9,"reinforcingActions":["test action"],"weakeningActions":[]}]}' 2>/dev/null)
+  if echo "$VF_POST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok')" 2>/dev/null; then
+    pass "POST /vf-game returns {ok: true}"
+  else
+    fail "POST /vf-game failed"
+  fi
+
+  # VF Game generates votes
+  VF_VOTES=$(curl -sf "$API/votes" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len([v for v in d.get('votes',[]) if v.get('source')=='vf-game']))" 2>/dev/null)
+  if [[ "$VF_VOTES" -gt "0" ]]; then
+    pass "VF Game generated votes in votes.json"
+  else
+    fail "VF Game did not generate votes"
+  fi
+
+  # ── Boss encounter tests ───────────────────────────────────────────────────
+
+  # POST /boss-encounters
+  BOSS_RESULT=$(curl -sf -X POST "$API/boss-encounters" \
+    -H "Content-Type: application/json" \
+    -d '{"badgeSlug":"frame-control","type":"text","title":"Test boss","content":"Integration test boss encounter"}' 2>/dev/null)
+  if echo "$BOSS_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok') and d.get('xpGained',0) > 0" 2>/dev/null; then
+    pass "POST /boss-encounters returns XP"
+  else
+    fail "POST /boss-encounters failed"
+  fi
+
+  # POST /boss-encounters — invalid type rejected (returns 400)
+  BOSS_BAD_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$API/boss-encounters" \
+    -H "Content-Type: application/json" \
+    -d '{"badgeSlug":"rdf","type":"invalid","content":"test"}' 2>/dev/null)
+  if [[ "$BOSS_BAD_CODE" == "400" ]]; then
+    pass "POST /boss-encounters rejects invalid type (400)"
+  else
+    fail "POST /boss-encounters returned $BOSS_BAD_CODE (expected 400)"
+  fi
+
+  # GET /boss-encounters
+  BOSS_LIST=$(curl -sf "$API/boss-encounters" 2>/dev/null)
+  if echo "$BOSS_LIST" | python3 -c "import json,sys; d=json.load(sys.stdin); assert isinstance(d, list) and len(d) > 0" 2>/dev/null; then
+    pass "GET /boss-encounters returns entries"
+  else
+    fail "GET /boss-encounters returned empty or invalid"
+  fi
+
+  # GET /boss-encounters?badge=frame-control
+  BOSS_FILTERED=$(curl -sf "$API/boss-encounters?badge=frame-control" 2>/dev/null)
+  if echo "$BOSS_FILTERED" | python3 -c "import json,sys; d=json.load(sys.stdin); assert all(e['badgeSlug']=='frame-control' for e in d)" 2>/dev/null; then
+    pass "GET /boss-encounters?badge= filters correctly"
+  else
+    fail "GET /boss-encounters badge filter broken"
+  fi
+
+  # XP penalty test: conviction ≤ 3 should reduce XP
+  PRE_XP=$(curl -sf "$API/badge-progress" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['badges']['fearlessness']['xp'])" 2>/dev/null)
+  curl -sf -X POST "$API/vf-game" \
+    -H "Content-Type: application/json" \
+    -d '{"affirmations":[{"badgeSlug":"fearlessness","convictionScore":1,"reinforcingActions":[],"weakeningActions":[]}]}' > /dev/null 2>&1
+  POST_XP=$(curl -sf "$API/badge-progress" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['badges']['fearlessness']['xp'])" 2>/dev/null)
+  if [[ "$POST_XP" -le "$PRE_XP" ]]; then
+    pass "VF Game conviction penalty works (XP: $PRE_XP → $POST_XP)"
+  else
+    fail "VF Game conviction penalty did not reduce XP ($PRE_XP → $POST_XP)"
   fi
 
   # Vote validation: invalid category rejected
