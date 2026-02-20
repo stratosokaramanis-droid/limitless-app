@@ -36,6 +36,7 @@ export default function App() {
 
   const items = useMemo(() => morningRoutine, [])
 
+  // Daily reset + reconcile with server on mount
   useEffect(() => {
     const now = new Date()
     const hour = now.getHours()
@@ -56,6 +57,24 @@ export default function App() {
     if (!lastReset) {
       localStorage.setItem(STORAGE_KEYS.lastReset, today)
     }
+
+    // Reconcile: fetch server state and merge into localStorage
+    fetch('/api/morning-block-log')
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data || data.date !== today || !data.items?.length) return
+        const serverStatuses = {}
+        for (const item of data.items) {
+          serverStatuses[item.id] = item.status
+        }
+        // Merge: server wins for any items we don't have locally
+        setStatuses((prev) => {
+          const merged = { ...serverStatuses, ...prev }
+          localStorage.setItem(STORAGE_KEYS.statuses, JSON.stringify(merged))
+          return merged
+        })
+      })
+      .catch(() => {}) // server offline — localStorage is fine as fallback
   }, [])
 
   useEffect(() => {

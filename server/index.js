@@ -15,6 +15,19 @@ const HISTORY_DIR = path.join(DATA_DIR, 'history')
 app.use(cors())
 app.use(express.json())
 
+// ─── Request logging ──────────────────────────────────────────────────────────
+
+app.use((req, res, next) => {
+  if (req.method !== 'GET' || req.path === '/health') {
+    // skip noisy GET logs, but log health checks and all writes
+  }
+  if (req.method === 'POST') {
+    const summary = req.body ? Object.keys(req.body).join(',') : '(empty)'
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} keys=[${summary}]`)
+  }
+  next()
+})
+
 // ─── Stubs ────────────────────────────────────────────────────────────────────
 
 const STUBS = {
@@ -74,12 +87,14 @@ const DAILY_FILES = Object.keys(STUBS)
 
 const filePath = (name) => path.join(DATA_DIR, `${name}.json`)
 
+const freshStub = (name) => structuredClone(STUBS[name])
+
 const readJson = (name) => {
   try {
     const raw = fs.readFileSync(filePath(name), 'utf8')
     return JSON.parse(raw)
   } catch {
-    return { ...STUBS[name] }
+    return freshStub(name)
   }
 }
 
@@ -90,11 +105,22 @@ const writeJson = (name, data) => {
 const nowIso = () => new Date().toISOString()
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
-// ─── Historical snapshot ──────────────────────────────────────────────────────
+// Pick only allowed keys from an object
+const pick = (obj, keys) => {
+  const result = {}
+  for (const k of keys) {
+    if (obj[k] !== undefined) result[k] = obj[k]
+  }
+  return result
+}
+
+// ─── Historical snapshot (idempotent) ─────────────────────────────────────────
 
 const archiveDay = (dateStr) => {
   try {
     const dayDir = path.join(HISTORY_DIR, dateStr)
+    // Idempotent: skip if already archived
+    if (fs.existsSync(dayDir)) return
     fs.mkdirSync(dayDir, { recursive: true })
     for (const name of DAILY_FILES) {
       const src = filePath(name)
@@ -102,6 +128,7 @@ const archiveDay = (dateStr) => {
       if (fs.existsSync(src)) fs.copyFileSync(src, dst)
     }
     pruneHistory(90)
+    console.log(`[${nowIso()}] Archived day: ${dateStr}`)
   } catch (err) {
     console.error('Archive failed:', err.message)
   }
@@ -123,11 +150,23 @@ const resetForNewDay = (name, today) => {
   const data = readJson(name)
   if (data.date && data.date !== today) {
     archiveDay(data.date)
-    return { ...STUBS[name], date: today }
+    return freshStub(name)
   }
-  if (!data.date) return { ...STUBS[name], date: today }
+  if (!data.date) return freshStub(name)
   return data
 }
+
+// ─── Health ───────────────────────────────────────────────────────────────────
+
+app.get('/health', (req, res) => {
+  res.json({
+    ok: true,
+    uptime: process.uptime(),
+    dataDir: DATA_DIR,
+    files: DAILY_FILES.length,
+    timestamp: nowIso()
+  })
+})
 
 // ─── GET endpoints ────────────────────────────────────────────────────────────
 
@@ -169,7 +208,7 @@ app.get('/history/:date', (req, res) => {
     try {
       result[name] = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, date, `${name}.json`), 'utf8'))
     } catch {
-      result[name] = { ...STUBS[name] }
+      result[name] = freshStub(name)
     }
   }
   res.json(result)
@@ -182,7 +221,7 @@ app.get('/history/:date/:file', (req, res) => {
   try {
     res.json(JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, date, `${file}.json`), 'utf8')))
   } catch {
-    res.json({ ...STUBS[file] })
+    res.json(freshStub(file))
   }
 })
 
@@ -193,6 +232,7 @@ app.post('/morning-block-log', (req, res) => {
   if (!itemId || !status) return res.status(400).json({ error: 'itemId and status required' })
   const today = todayStr()
   let data = resetForNewDay('morning-block-log', today)
+  data.date = today
   if (!data.startedAt) data.startedAt = nowIso()
 
   const idx = data.items.findIndex((i) => i.id === itemId)
@@ -209,11 +249,81 @@ app.post('/morning-block-log', (req, res) => {
 
 // ─── POST /creative-block-log ─────────────────────────────────────────────────
 
+const CREATIVE_BLOCK_FIELDS = ['status', 'startedAt', 'completedAt']
+
 app.post('/creative-block-log', (req, res) => {
   const today = todayStr()
   let data = resetForNewDay('creative-block-log', today)
-  Object.assign(data, req.body)
+  data.date = today
+  const allowed = pick(req.body, CREATIVE_BLOCK_FIELDS)
+  Object.assign(data, allowed)
   writeJson('creative-block-log', data)
+  res.json({ ok: true })
+})
+
+// ─── POST /sleep-data (Pulse) ─────────────────────────────────────────────────
+
+const SLEEP_DATA_FIELDS = ['source', 'hoursSlept', 'quality', 'sleepScore', 'wakeUpMood', 'notes', 'rawExtracted', 'createdAt']
+
+app.post('/sleep-data', (req, res) => {
+  const today = todayStr()
+  let data = resetForNewDay('sleep-data', today)
+  data.date = today
+  const allowed = pick(req.body, SLEEP_DATA_FIELDS)
+  Object.assign(data, allowed)
+  if (!data.createdAt) data.createdAt = nowIso()
+  writeJson('sleep-data', data)
+  res.json({ ok: true })
+})
+
+// ─── POST /fitmind-data (Pulse) ───────────────────────────────────────────────
+
+const FITMIND_DATA_FIELDS = ['source', 'workoutCompleted', 'duration', 'type', 'score', 'notes', 'createdAt']
+
+app.post('/fitmind-data', (req, res) => {
+  const today = todayStr()
+  let data = resetForNewDay('fitmind-data', today)
+  data.date = today
+  const allowed = pick(req.body, FITMIND_DATA_FIELDS)
+  Object.assign(data, allowed)
+  if (!data.createdAt) data.createdAt = nowIso()
+  writeJson('fitmind-data', data)
+  res.json({ ok: true })
+})
+
+// ─── POST /morning-state (Dawn) ──────────────────────────────────────────────
+
+const MORNING_STATE_FIELDS = ['energyScore', 'mentalClarity', 'emotionalState', 'insights',
+  'dayPriority', 'resistanceNoted', 'resistanceDescription', 'overallMorningScore', 'rawNotes',
+  'createdAt', 'updatedAt']
+
+app.post('/morning-state', (req, res) => {
+  const today = todayStr()
+  let data = resetForNewDay('morning-state', today)
+  data.date = today
+  const allowed = pick(req.body, MORNING_STATE_FIELDS)
+  Object.assign(data, allowed)
+  if (!data.createdAt) data.createdAt = nowIso()
+  data.updatedAt = nowIso()
+  writeJson('morning-state', data)
+  res.json({ ok: true })
+})
+
+// ─── POST /creative-state (Muse) ─────────────────────────────────────────────
+
+const CREATIVE_STATE_FIELDS = ['activities', 'energyScore', 'creativeOutput', 'insights',
+  'nutrition', 'nutritionScore', 'dopamineQuality', 'moodShift', 'rawNotes',
+  'createdAt', 'updatedAt']
+
+app.post('/creative-state', (req, res) => {
+  const today = todayStr()
+  let data = resetForNewDay('creative-state', today)
+  data.date = today
+  const allowed = pick(req.body, CREATIVE_STATE_FIELDS)
+  Object.assign(data, allowed)
+  if (!data.createdAt) data.createdAt = nowIso()
+  data.updatedAt = nowIso()
+  writeJson('creative-state', data)
   res.json({ ok: true })
 })
 
@@ -224,6 +334,7 @@ app.post('/work-sessions/start', (req, res) => {
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' })
   const today = todayStr()
   let data = resetForNewDay('work-sessions', today)
+  data.date = today
 
   const existing = data.sessions.find((s) => s.id === sessionId)
   if (existing) {
@@ -250,6 +361,7 @@ app.post('/work-sessions/end', (req, res) => {
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' })
   const today = todayStr()
   let data = resetForNewDay('work-sessions', today)
+  data.date = today
 
   let session = data.sessions.find((s) => s.id === sessionId)
   if (!session) {
@@ -282,7 +394,9 @@ app.post('/votes', (req, res) => {
 
   const today = todayStr()
   let data = resetForNewDay('votes', today)
+  data.date = today
 
+  let added = 0
   for (const v of incoming) {
     if (!VALID_CATEGORIES.has(v.category)) continue
     if (!VALID_POLARITIES.has(v.polarity)) continue
@@ -297,28 +411,49 @@ app.post('/votes', (req, res) => {
       source: v.source || 'unknown',
       weight: v.weight || 1
     })
+    added++
   }
 
   writeJson('votes', data)
-  res.json({ ok: true, added: incoming.length })
+  res.json({ ok: true, added })
+})
+
+// ─── POST /events ─────────────────────────────────────────────────────────────
+
+app.post('/events', (req, res) => {
+  const { events } = req.body
+  if (!Array.isArray(events)) return res.status(400).json({ error: 'events array required' })
+
+  const eventsPath = path.join(DATA_DIR, 'events.jsonl')
+  const lines = events
+    .filter((e) => e && typeof e === 'object')
+    .map((e) => {
+      if (!e.timestamp) e.timestamp = nowIso()
+      return JSON.stringify(e)
+    })
+
+  if (lines.length > 0) {
+    fs.appendFileSync(eventsPath, lines.join('\n') + '\n', 'utf8')
+  }
+
+  res.json({ ok: true, added: lines.length })
 })
 
 // ─── POST /night-routine ──────────────────────────────────────────────────────
 
+const NIGHT_ROUTINE_FIELDS = ['letGoCompleted', 'letGoTimestamp', 'nervousSystemCompleted', 'nervousSystemTimestamp',
+  'planCompleted', 'planTimestamp', 'tomorrowPlan', 'promptsReviewed', 'promptsTimestamp',
+  'affirmationsReviewed', 'affirmationsTimestamp', 'alterMemoriesCompleted', 'alterMemoriesTimestamp']
+
 app.post('/night-routine', (req, res) => {
   const today = todayStr()
   let data = resetForNewDay('night-routine', today)
+  data.date = today
   if (!data.startedAt) data.startedAt = nowIso()
 
-  // Merge any provided fields
-  const allowed = ['letGoCompleted', 'letGoTimestamp', 'nervousSystemCompleted', 'nervousSystemTimestamp',
-    'planCompleted', 'planTimestamp', 'tomorrowPlan', 'promptsReviewed', 'promptsTimestamp',
-    'affirmationsReviewed', 'affirmationsTimestamp', 'alterMemoriesCompleted', 'alterMemoriesTimestamp']
-  for (const key of allowed) {
-    if (req.body[key] !== undefined) data[key] = req.body[key]
-  }
+  const allowed = pick(req.body, NIGHT_ROUTINE_FIELDS)
+  Object.assign(data, allowed)
 
-  // Auto-set completedAt if all done
   if (data.letGoCompleted && data.nervousSystemCompleted && data.planCompleted) {
     data.completedAt = data.completedAt || nowIso()
   }
@@ -329,14 +464,27 @@ app.post('/night-routine', (req, res) => {
 
 // ─── POST /midday-checkin ─────────────────────────────────────────────────────
 
+const MIDDAY_CHECKIN_FIELDS = ['energyScore', 'notes', 'rawNotes']
+
 app.post('/midday-checkin', (req, res) => {
   const today = todayStr()
   let data = resetForNewDay('midday-checkin', today)
-  data.triggeredAt = data.triggeredAt || nowIso()
-  Object.assign(data, req.body)
   data.date = today
+  data.triggeredAt = data.triggeredAt || nowIso()
+  const allowed = pick(req.body, MIDDAY_CHECKIN_FIELDS)
+  Object.assign(data, allowed)
   writeJson('midday-checkin', data)
   res.json({ ok: true })
+})
+
+// ─── Error handler ────────────────────────────────────────────────────────────
+
+process.on('uncaughtException', (err) => {
+  console.error(`[${nowIso()}] UNCAUGHT EXCEPTION:`, err)
+})
+
+process.on('unhandledRejection', (err) => {
+  console.error(`[${nowIso()}] UNHANDLED REJECTION:`, err)
 })
 
 // ─── Start ────────────────────────────────────────────────────────────────────
@@ -344,6 +492,8 @@ app.post('/midday-checkin', (req, res) => {
 fs.mkdirSync(HISTORY_DIR, { recursive: true })
 
 app.listen(PORT, () => {
-  console.log(`Limitless file server :${PORT}`)
-  console.log(`Data: ${DATA_DIR}`)
+  console.log(`[${nowIso()}] Limitless file server :${PORT}`)
+  console.log(`  Data:    ${DATA_DIR}`)
+  console.log(`  History: ${HISTORY_DIR}`)
+  console.log(`  Files:   ${DAILY_FILES.join(', ')}`)
 })

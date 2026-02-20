@@ -18,13 +18,28 @@ function calcSleep(sleepData) {
   return Math.min(Math.max(hoursScore * 0.6 + qualityScore * 0.4, 0), 10)
 }
 
-function calcNutrition(creativeState) {
-  if (!creativeState?.nutrition?.logged) return null
-  if (creativeState.nutritionScore != null) return creativeState.nutritionScore
-  return 6.5 // logged but no quality score yet — neutral positive
+function calcNutrition(creativeState, workSessions) {
+  const scores = []
+
+  // Creative block nutrition
+  if (creativeState?.nutritionScore != null) {
+    scores.push(creativeState.nutritionScore)
+  } else if (creativeState?.nutrition?.logged) {
+    scores.push(6.5)
+  }
+
+  // Work session nutrition (lunch + any session meals)
+  const sessions = workSessions?.sessions || []
+  for (const s of sessions) {
+    if (s.nutritionScore != null) scores.push(s.nutritionScore)
+  }
+  if (workSessions?.lunchNutritionScore != null) scores.push(workSessions.lunchNutritionScore)
+
+  if (scores.length === 0) return null
+  return scores.reduce((a, b) => a + b, 0) / scores.length
 }
 
-function calcDopamine(fitmindData, morningLog, creativeState) {
+function calcDopamine(fitmindData, morningLog, creativeState, workSessions) {
   let score = 5.0
   let hasData = false
 
@@ -49,6 +64,14 @@ function calcDopamine(fitmindData, morningLog, creativeState) {
   } else if (creativeState?.energyScore != null) {
     hasData = true
     score += (creativeState.energyScore - 5) * 0.2
+  }
+
+  // Work session flow scores feed dopamine
+  const completedSessions = workSessions?.sessions?.filter(s => s.endedAt && s.flowScore != null) || []
+  if (completedSessions.length > 0) {
+    hasData = true
+    const avgFlow = completedSessions.reduce((sum, s) => sum + s.flowScore, 0) / completedSessions.length
+    score += (avgFlow - 5) * 0.3
   }
 
   if (!hasData) return null
@@ -160,13 +183,14 @@ export default function StateTab() {
         '/api/fitmind-data',
         '/api/morning-block-log',
         '/api/morning-state',
-        '/api/creative-state'
+        '/api/creative-state',
+        '/api/work-sessions'
       ]
       const results = await Promise.allSettled(endpoints.map(u => fetch(u).then(r => r.ok ? r.json() : null)))
-      const [sleepData, fitmindData, morningLog, morningState, creativeState] = results.map(
+      const [sleepData, fitmindData, morningLog, morningState, creativeState, workSessions] = results.map(
         r => (r.status === 'fulfilled' ? r.value : null) ?? {}
       )
-      setRaw({ sleepData, fitmindData, morningLog, morningState, creativeState })
+      setRaw({ sleepData, fitmindData, morningLog, morningState, creativeState, workSessions })
     } catch {
       setRaw({})
     } finally {
@@ -188,11 +212,11 @@ export default function StateTab() {
     )
   }
 
-  const { sleepData, fitmindData, morningLog, morningState, creativeState } = raw
+  const { sleepData, fitmindData, morningLog, morningState, creativeState, workSessions } = raw
 
   const sleep = calcSleep(sleepData)
-  const nutrition = calcNutrition(creativeState)
-  const dopamine = calcDopamine(fitmindData, morningLog, creativeState)
+  const nutrition = calcNutrition(creativeState, workSessions)
+  const dopamine = calcDopamine(fitmindData, morningLog, creativeState, workSessions)
   const mood = calcMood(morningState, creativeState)
   const state = calcState(sleep, nutrition, dopamine, mood)
 

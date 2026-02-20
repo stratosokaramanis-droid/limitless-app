@@ -5,6 +5,12 @@
 
 ---
 
+## ⚠️ BEFORE TOUCHING CONFIG — READ THIS
+
+`~/.openclaw/workspace/CONFIG_NOTES.md` — Critical rules for openclaw.json. Especially: **accounts.stratos must always exist** or Telegram inbound dies silently. Any config patch that touches `channels.telegram.accounts` or `bindings` must preserve it.
+
+---
+
 ## ✅ Completed
 
 - [x] Step 1–8: Data layer, all agents, app scaffold, file server

@@ -40,11 +40,11 @@ d = json.load(open('$OPENCLAW_CONFIG'))
 ch = d.get('channels', {}).get('telegram', {})
 assert ch.get('botToken'), 'missing main botToken'
 accts = ch.get('accounts', {})
-for name in ['pulse', 'dawn', 'muse']:
+for name in ['pulse', 'dawn', 'muse', 'forge', 'luna']:
     assert accts.get(name, {}).get('botToken'), f'missing {name} token'
 print('ok')
 " 2>/dev/null | grep -q ok; then
-    pass "All 4 bot tokens present in config"
+    pass "All 6 bot tokens present in config"
   else
     fail "Missing bot tokens in config"
   fi
@@ -64,7 +64,7 @@ fi
 
 section "Shared Data Layer"
 
-for file in morning-block-log creative-block-log sleep-data fitmind-data morning-state creative-state events; do
+for file in morning-block-log creative-block-log sleep-data fitmind-data morning-state creative-state work-sessions votes night-routine midday-checkin events; do
   if [[ "$file" == "events" ]]; then
     target="$DATA_DIR/events.jsonl"
   else
@@ -78,7 +78,7 @@ for file in morning-block-log creative-block-log sleep-data fitmind-data morning
 done
 
 # Validate JSON files
-for file in morning-block-log creative-block-log sleep-data fitmind-data morning-state creative-state; do
+for file in morning-block-log creative-block-log sleep-data fitmind-data morning-state creative-state work-sessions votes night-routine midday-checkin; do
   if python3 -m json.tool "$DATA_DIR/${file}.json" &>/dev/null; then
     pass "$file.json is valid JSON"
   else
@@ -90,7 +90,7 @@ done
 
 section "Agent Workspaces"
 
-for agent in limitless-state morning-checkin creative-checkin; do
+for agent in limitless-state morning-checkin creative-checkin work-session night-routine; do
   workspace="$HOME/.openclaw/agents/$agent/workspace"
   if [[ -f "$workspace/SOUL.md" ]]; then
     pass "$agent has SOUL.md"
@@ -119,7 +119,7 @@ if curl -sf "$API/morning-block-log" &>/dev/null; then
   pass "File server reachable on :3001"
 
   # GET endpoints
-  for endpoint in morning-block-log creative-block-log sleep-data fitmind-data morning-state creative-state events history; do
+  for endpoint in morning-block-log creative-block-log sleep-data fitmind-data morning-state creative-state work-sessions votes night-routine midday-checkin events history; do
     RESPONSE=$(curl -sf "$API/$endpoint" 2>/dev/null)
     if echo "$RESPONSE" | python3 -m json.tool &>/dev/null; then
       pass "GET /$endpoint returns valid JSON"
@@ -167,6 +167,87 @@ assert '$TEST_ITEM' in ids, 'item not found in file'
     pass "GET /history/:date returns valid JSON"
   else
     fail "GET /history/:date failed"
+  fi
+
+  # Health endpoint
+  HEALTH=$(curl -sf "$API/health" 2>/dev/null)
+  if echo "$HEALTH" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok')" 2>/dev/null; then
+    pass "GET /health returns {ok: true}"
+  else
+    fail "GET /health failed"
+  fi
+
+  # New POST endpoints: sleep-data, fitmind-data, morning-state, creative-state, events
+  for ep in sleep-data fitmind-data morning-state creative-state; do
+    RESULT=$(curl -sf -X POST "$API/$ep" \
+      -H "Content-Type: application/json" \
+      -d '{"notes":"integration-test"}' 2>/dev/null)
+    if echo "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok')" 2>/dev/null; then
+      pass "POST /$ep returns {ok: true}"
+    else
+      fail "POST /$ep failed"
+    fi
+  done
+
+  # POST /events
+  EVENTS_RESULT=$(curl -sf -X POST "$API/events" \
+    -H "Content-Type: application/json" \
+    -d '{"events":[{"source":"test","type":"integration_test","payload":{}}]}' 2>/dev/null)
+  if echo "$EVENTS_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok')" 2>/dev/null; then
+    pass "POST /events returns {ok: true}"
+  else
+    fail "POST /events failed"
+  fi
+
+  # POST /work-sessions/start
+  WS_START=$(curl -sf -X POST "$API/work-sessions/start" \
+    -H "Content-Type: application/json" \
+    -d '{"sessionId":99,"focus":"test","evaluationCriteria":"test"}' 2>/dev/null)
+  if echo "$WS_START" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok')" 2>/dev/null; then
+    pass "POST /work-sessions/start returns {ok: true}"
+  else
+    fail "POST /work-sessions/start failed"
+  fi
+
+  # POST /work-sessions/end
+  WS_END=$(curl -sf -X POST "$API/work-sessions/end" \
+    -H "Content-Type: application/json" \
+    -d '{"sessionId":99,"outcomes":"test","outcomeScore":7,"flowScore":8,"compositeScore":7.4}' 2>/dev/null)
+  if echo "$WS_END" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok')" 2>/dev/null; then
+    pass "POST /work-sessions/end returns {ok: true}"
+  else
+    fail "POST /work-sessions/end failed"
+  fi
+
+  # POST /night-routine
+  NR_RESULT=$(curl -sf -X POST "$API/night-routine" \
+    -H "Content-Type: application/json" \
+    -d '{"letGoCompleted":true,"letGoTimestamp":"2026-02-20T22:00:00Z"}' 2>/dev/null)
+  if echo "$NR_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); assert d.get('ok')" 2>/dev/null; then
+    pass "POST /night-routine returns {ok: true}"
+  else
+    fail "POST /night-routine failed"
+  fi
+
+  # Whitelist test: verify field injection is blocked
+  curl -sf -X POST "$API/midday-checkin" \
+    -H "Content-Type: application/json" \
+    -d '{"energyScore":5,"badField":"INJECT","notes":"test"}' > /dev/null 2>&1
+  if python3 -c "import json; d=json.load(open('$DATA_DIR/midday-checkin.json')); assert 'badField' not in d" 2>/dev/null; then
+    pass "Field injection blocked (whitelist working)"
+  else
+    fail "Field injection NOT blocked — whitelist broken"
+  fi
+
+  # Vote validation: invalid category rejected
+  VOTE_RESULT=$(curl -sf -X POST "$API/votes" \
+    -H "Content-Type: application/json" \
+    -d '{"votes":[{"action":"test","category":"INVALID","polarity":"positive","source":"test"}]}' 2>/dev/null)
+  ADDED=$(echo "$VOTE_RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('added',0))" 2>/dev/null)
+  if [[ "$ADDED" == "0" ]]; then
+    pass "Invalid vote category rejected"
+  else
+    fail "Invalid vote category was accepted (should be rejected)"
   fi
 
 else
