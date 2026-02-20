@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import BottomNav from './components/BottomNav.jsx'
 import MorningRoutine from './components/MorningRoutine.jsx'
 import PlaceholderTab from './components/PlaceholderTab.jsx'
+import StateTab from './components/StateTab.jsx'
 import morningRoutine from './data/morningRoutine.js'
 
 const STORAGE_KEYS = {
@@ -128,7 +129,7 @@ export default function App() {
         <main className="flex-1 p-4">
           <div className="h-full border border-white/10 bg-card shadow-glow">
             {activeTab === 'today' && renderToday()}
-            {activeTab === 'state' && <PlaceholderTab title="State" />}
+            {activeTab === 'state' && <StateTab />}
             {activeTab === 'badges' && <PlaceholderTab title="Badges" />}
             {activeTab === 'stats' && <PlaceholderTab title="Stats" />}
           </div>
