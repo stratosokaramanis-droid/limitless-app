@@ -155,7 +155,7 @@ export default function App() {
         className="mx-auto flex h-dvh max-w-[430px] flex-col"
         style={{ paddingBottom: 'calc(68px + env(safe-area-inset-bottom, 0px))' }}
       >
-        <main className="flex-1 flex flex-col pt-safe">
+        <main className="flex-1 min-h-0 flex flex-col pt-safe">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={activeTab}
@@ -163,7 +163,7 @@ export default function App() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.12 }}
-              className="flex-1 flex flex-col"
+              className="flex-1 min-h-0 flex flex-col"
             >
               {activeTab === 'home' && (
                 <DashboardTab onNavigateToFocus={() => setActiveTab('focus')} />

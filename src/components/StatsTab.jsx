@@ -127,7 +127,7 @@ export default function StatsTab() {
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-y-auto no-scrollbar">
+    <div className="flex flex-1 min-h-0 flex-col overflow-y-auto no-scrollbar">
       {/* Header */}
       <div className="px-6 pt-8 pb-4">
         <h1 className="text-[28px] font-bold tracking-tight">Votes</h1>

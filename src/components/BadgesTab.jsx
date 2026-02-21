@@ -164,7 +164,7 @@ export default function BadgesTab() {
   const activeMissions = missions?.active?.filter((m) => m.status === 'pending').length || 0
 
   return (
-    <div className="flex flex-1 flex-col">
+    <div className="flex flex-1 min-h-0 flex-col">
       {/* Header */}
       <div className="px-6 pt-8 pb-4">
         <h1 className="text-[28px] font-bold tracking-tight">Badges</h1>
