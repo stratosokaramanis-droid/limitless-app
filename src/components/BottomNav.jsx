@@ -40,7 +40,7 @@ const tabs = [
   { id: 'focus', label: 'Focus', Icon: FocusIcon },
   { id: 'state', label: 'State', Icon: StateIcon },
   { id: 'badges', label: 'Badges', Icon: BadgesIcon },
-  { id: 'stats', label: 'Stats', Icon: StatsIcon },
+  { id: 'stats', label: 'Votes', Icon: StatsIcon },
 ]
 
 export default function BottomNav({ activeTab, onChange }) {

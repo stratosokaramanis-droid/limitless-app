@@ -85,7 +85,7 @@ export default function HabitCard({
       </div>
 
       {/* Content */}
-      <div className="flex flex-1 flex-col justify-center">
+      <div className="flex flex-1 flex-col justify-center pb-8">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -101,7 +101,7 @@ export default function HabitCard({
       </div>
 
       {/* Actions */}
-      <div className="space-y-3 pb-8">
+      <div className="space-y-3 pb-10">
         {item.needsPulse && (
           <motion.a
             whileTap={{ scale: 0.97 }}
@@ -126,8 +126,12 @@ export default function HabitCard({
           transition={isHolding ? { repeat: Infinity, duration: 0.6 } : {}}
         >
           <div
-            className="absolute inset-0 bg-white/[0.12]"
-            style={{ width: `${progress * 100}%`, transition: 'none' }}
+            className="absolute inset-0"
+            style={{
+              width: `${progress * 100}%`,
+              transition: 'none',
+              background: `rgba(48, 209, 88, ${0.1 + progress * 0.3})`
+            }}
           />
           <AnimatePresence mode="wait" initial={false}>
             {completed ? (

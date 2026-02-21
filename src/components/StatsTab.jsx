@@ -136,6 +136,14 @@ export default function StatsTab() {
           <span className="font-medium text-negative/60">-{negative.length}</span>
           <span className="text-white/20">{allVotes.length} total</span>
         </div>
+        <a
+          href="https://t.me/limitless_luna_bot"
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white/[0.06] px-4 py-2 text-[13px] font-medium text-white/40 active:bg-white/[0.1]"
+        >
+          💬 Review with Luna
+        </a>
       </div>
 
       {allVotes.length === 0 ? (

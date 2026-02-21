@@ -71,8 +71,12 @@ function HoldButton({ onComplete, label }) {
       transition={holding ? { repeat: Infinity, duration: 0.6 } : {}}
     >
       <div
-        className="absolute inset-0 bg-white/[0.12]"
-        style={{ width: `${progress * 100}%`, transition: 'none' }}
+        className="absolute inset-0"
+        style={{
+          width: `${progress * 100}%`,
+          transition: 'none',
+          background: `rgba(48, 209, 88, ${0.1 + progress * 0.3})`
+        }}
       />
       <span className="relative block text-[15px] font-semibold text-white">
         {holding ? 'Holding...' : label}
@@ -247,7 +251,7 @@ export default function NightRoutine() {
           animate="center"
           exit="exit"
           transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-          className="flex flex-1 flex-col justify-center"
+          className="flex flex-1 flex-col justify-center pb-8"
         >
           <div className="text-center">
             <h1 className="text-[28px] font-bold tracking-tight">{currentItem.title}</h1>
@@ -257,7 +261,7 @@ export default function NightRoutine() {
       </AnimatePresence>
 
       {/* Actions */}
-      <div className="space-y-3 pb-8">
+      <div className="space-y-3 pb-10">
         {currentItem.lunaLink && (
           <motion.a
             whileTap={{ scale: 0.97 }}
