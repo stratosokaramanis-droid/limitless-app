@@ -11,40 +11,80 @@ const CATEGORY_COLORS = {
   relationships: '#FFD60A',
 }
 
-function VoteBar({ category, positive, negative, delay = 0 }) {
-  const total = positive + negative
-  const posPct = total > 0 ? (positive / total) * 100 : 50
+const MAX_DOTS = 24
+
+function VotePile({ category, positive, negative, delay = 0 }) {
   const color = CATEGORY_COLORS[category] || '#ffffff'
+  const posDots = Math.min(positive, MAX_DOTS)
+  const negDots = Math.min(negative, MAX_DOTS)
+  const posOverflow = positive > MAX_DOTS ? positive - MAX_DOTS : 0
+  const negOverflow = negative > MAX_DOTS ? negative - MAX_DOTS : 0
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2.5">
+      {/* Label row */}
       <div className="flex items-center justify-between">
-        <span className="flex items-center gap-2 text-[14px] font-medium text-white/50">
-          <span
-            className="inline-block h-2 w-2 rounded-full"
-            style={{ background: color }}
-          />
+        <span className="flex items-center gap-2 text-[13px] font-medium text-white/40">
+          <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: color }} />
           {category}
         </span>
-        <span className="text-[12px] font-medium tabular-nums text-white/20">
+        <span className="text-[11px] font-medium tabular-nums text-white/20">
           +{positive} / -{negative}
         </span>
       </div>
-      <div className="flex h-2 overflow-hidden rounded-full bg-white/[0.04]">
-        <motion.div
-          initial={{ width: 0 }}
-          animate={{ width: `${posPct}%` }}
-          transition={{ duration: 0.7, delay, ease: 'easeOut' }}
-          className="rounded-full"
-          style={{ background: 'rgba(48, 209, 88, 0.5)' }}
-        />
-        <motion.div
-          initial={{ width: 0 }}
-          animate={{ width: `${100 - posPct}%` }}
-          transition={{ duration: 0.7, delay: delay + 0.05, ease: 'easeOut' }}
-          className="rounded-full"
-          style={{ background: 'rgba(255, 69, 58, 0.3)' }}
-        />
+
+      {/* Piles */}
+      <div className="flex items-end gap-0">
+        {/* Positive pile — right-aligned, grows toward center */}
+        <div className="flex flex-1 justify-end">
+          <div className="flex flex-wrap-reverse justify-end gap-[3px]" style={{ maxWidth: '100%' }}>
+            {Array.from({ length: posDots }).map((_, i) => (
+              <motion.span
+                key={i}
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{
+                  delay: delay + i * 0.025,
+                  type: 'spring',
+                  stiffness: 600,
+                  damping: 28,
+                }}
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ background: 'rgba(48, 209, 88, 0.55)' }}
+              />
+            ))}
+            {posOverflow > 0 && (
+              <span className="self-center text-[10px] text-white/20 mr-1">+{posOverflow}</span>
+            )}
+          </div>
+        </div>
+
+        {/* Center divider */}
+        <div className="mx-2 w-px self-stretch min-h-[10px] bg-white/[0.08] flex-shrink-0" />
+
+        {/* Negative pile — left-aligned, grows away from center */}
+        <div className="flex flex-1 justify-start">
+          <div className="flex flex-wrap-reverse justify-start gap-[3px]" style={{ maxWidth: '100%' }}>
+            {Array.from({ length: negDots }).map((_, i) => (
+              <motion.span
+                key={i}
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{
+                  delay: delay + i * 0.025 + 0.08,
+                  type: 'spring',
+                  stiffness: 600,
+                  damping: 28,
+                }}
+                className="inline-block h-2.5 w-2.5 rounded-full"
+                style={{ background: 'rgba(255, 69, 58, 0.5)' }}
+              />
+            ))}
+            {negOverflow > 0 && (
+              <span className="self-center text-[10px] text-white/20 ml-1">+{negOverflow}</span>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -58,7 +98,7 @@ function VoteItem({ vote }) {
       <span className={`mt-0.5 text-[14px] font-semibold ${
         vote.polarity === 'positive' ? 'text-positive/60' : 'text-negative/60'
       }`}>
-        {vote.polarity === 'positive' ? '+' : '-'}
+        {vote.polarity === 'positive' ? '+' : '−'}
       </span>
       <div className="flex-1 min-w-0">
         <p className="text-[14px] leading-snug text-white/60">{vote.action}</p>
@@ -133,7 +173,7 @@ export default function StatsTab() {
         <h1 className="text-[28px] font-bold tracking-tight">Votes</h1>
         <div className="mt-2 flex items-center gap-3 text-[13px]">
           <span className="font-medium text-positive/60">+{positive.length}</span>
-          <span className="font-medium text-negative/60">-{negative.length}</span>
+          <span className="font-medium text-negative/60">−{negative.length}</span>
           <span className="text-white/20">{allVotes.length} total</span>
         </div>
         <a
@@ -154,18 +194,25 @@ export default function StatsTab() {
         </div>
       ) : (
         <div className="space-y-8 px-6 pb-6">
-          {/* Category breakdown */}
-          <div className="space-y-4">
-            <p className="text-[11px] font-medium uppercase tracking-widest text-white/15">
-              By Category
-            </p>
+          {/* Category breakdown — vote piles */}
+          <div className="space-y-5">
+            <div className="flex items-center justify-between">
+              <p className="text-[11px] font-medium uppercase tracking-widest text-white/15">
+                By Category
+              </p>
+              <div className="flex items-center gap-3 text-[10px] font-medium text-white/15 uppercase tracking-widest">
+                <span className="text-positive/40">pos</span>
+                <span className="w-px h-3 bg-white/[0.08]" />
+                <span className="text-negative/40">neg</span>
+              </div>
+            </div>
             {sortedCategories.map(([cat, counts], i) => (
-              <VoteBar
+              <VotePile
                 key={cat}
                 category={cat}
                 positive={counts.positive}
                 negative={counts.negative}
-                delay={i * 0.06}
+                delay={i * 0.05}
               />
             ))}
           </div>
