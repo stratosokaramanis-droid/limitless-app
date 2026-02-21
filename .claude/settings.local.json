@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git clone:*)",
+      "Bash(cd \"C:/Users/anast/Desktop/stefRepos/Limitless-System-UI\" && git init && git remote add origin https://github.com/stratosokaramanis-droid/limitless-app.git && git pull origin main 2>&1)",
+      "Bash(cd \"C:/Users/anast/Desktop/stefRepos/Limitless-System-UI\" && git pull origin master 2>&1)",
+      "Bash(tail:*)",
+      "Bash(cd \"C:/Users/anast/Desktop/stefRepos/Limitless-System-UI\" && npx vite build 2>&1)",
+      "Bash(cd /c/Users/anast/Desktop/stefRepos/Limitless-System-UI && npx vite build 2>&1)"
+    ]
+  }
+}

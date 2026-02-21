@@ -6,13 +6,23 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: ['Clash Grotesk', 'sans-serif'],
+      },
       colors: {
-        bg: '#0A0A0A',
-        card: '#141414',
-        accent: '#E8E8E8'
+        bg: '#000000',
+        card: '#1C1C1E',
+        accent: '#FFFFFF',
+        surface: '#1C1C1E',
+        pillarsleep: '#5E9EFF',
+        pillarnutrition: '#30D158',
+        pillardopamine: '#BF5AF2',
+        pillarmood: '#FF9F0A',
+        positive: '#30D158',
+        negative: '#FF453A',
       },
       boxShadow: {
-        glow: '0 0 40px rgba(232, 232, 232, 0.08)'
+        glow: '0 0 80px rgba(255, 255, 255, 0.03)',
       }
     }
   },

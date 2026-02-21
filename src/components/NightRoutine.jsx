@@ -1,47 +1,83 @@
 import { AnimatePresence, motion } from 'framer-motion'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import nightRoutineItems from '../data/nightRoutine.js'
+import { haptics } from '../utils/haptics.js'
+import { sounds } from '../utils/sounds.js'
+import Confetti from './Confetti.jsx'
 
 const LS_KEY = 'limitless_night_routine'
 
 const slideVariants = {
-  enter: { x: 120, opacity: 0 },
-  center: { x: 0, opacity: 1 },
-  exit: { x: -120, opacity: 0 },
+  enter: { x: 60, opacity: 0, scale: 0.98 },
+  center: { x: 0, opacity: 1, scale: 1 },
+  exit: { x: -60, opacity: 0, scale: 0.98 },
 }
 
 function HoldButton({ onComplete, label }) {
   const [progress, setProgress] = useState(0)
   const [holding, setHolding] = useState(false)
+  const holdingRef = useRef(false)
+  const rafRef = useRef(null)
 
   useEffect(() => {
-    if (!holding) { setProgress(0); return }
+    if (!holding) {
+      setProgress(0)
+      holdingRef.current = false
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      return
+    }
+    holdingRef.current = true
     const start = Date.now()
     const duration = 1000
     const tick = () => {
+      if (!holdingRef.current) return
       const elapsed = Date.now() - start
       const pct = Math.min(elapsed / duration, 1)
       setProgress(pct)
-      if (pct >= 1) { onComplete(); return }
-      requestAnimationFrame(tick)
+      if (pct >= 1) {
+        setHolding(false)
+        holdingRef.current = false
+        haptics.success()
+        sounds.complete()
+        onComplete()
+        return
+      }
+      rafRef.current = requestAnimationFrame(tick)
     }
-    const raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
+    rafRef.current = requestAnimationFrame(tick)
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+    }
   }, [holding, onComplete])
 
+  const cancel = () => {
+    holdingRef.current = false
+    setHolding(false)
+    setProgress(0)
+  }
+
   return (
-    <button
-      onPointerDown={() => setHolding(true)}
-      onPointerUp={() => setHolding(false)}
-      onPointerLeave={() => setHolding(false)}
-      className="relative w-full overflow-hidden border border-white/20 bg-white/10 px-4 py-3 text-sm uppercase tracking-wider text-white"
+    <motion.button
+      whileTap={!holding ? { scale: 0.97 } : undefined}
+      onPointerDown={() => {
+        haptics.tap()
+        setHolding(true)
+      }}
+      onPointerUp={cancel}
+      onPointerLeave={cancel}
+      onPointerCancel={cancel}
+      className="relative w-full overflow-hidden rounded-2xl bg-white/[0.08] px-5 py-[18px]"
+      animate={holding ? { scale: [0.98, 1.02, 0.98] } : { scale: 1 }}
+      transition={holding ? { repeat: Infinity, duration: 0.6 } : {}}
     >
       <div
-        className="absolute inset-0 bg-white/20 transition-none"
-        style={{ width: `${progress * 100}%` }}
+        className="absolute inset-0 bg-white/[0.12]"
+        style={{ width: `${progress * 100}%`, transition: 'none' }}
       />
-      <span className="relative">{label}</span>
-    </button>
+      <span className="relative block text-[15px] font-semibold text-white">
+        {holding ? 'Holding...' : label}
+      </span>
+    </motion.button>
   )
 }
 
@@ -52,6 +88,7 @@ export default function NightRoutine() {
       return raw ? JSON.parse(raw) : {}
     } catch { return {} }
   })
+  const [showConfetti, setShowConfetti] = useState(false)
 
   // Persist
   useEffect(() => {
@@ -73,11 +110,10 @@ export default function NightRoutine() {
               next[item.id] = 'done'
             }
           }
-          // finalize-plan has no field, mark done if plan is completed
           if (data.planCompleted && data.tomorrowPlan) {
             next['finalize-plan'] = 'done'
           }
-          return { ...next, ...prev } // local wins for items in progress
+          return { ...next, ...prev }
         })
       })
       .catch(() => {})
@@ -86,7 +122,6 @@ export default function NightRoutine() {
   const markDone = (item) => {
     setStatuses((prev) => ({ ...prev, [item.id]: 'done' }))
 
-    // POST to server
     if (item.field) {
       const body = { [item.field]: true }
       if (item.timestampField) body[item.timestampField] = new Date().toISOString()
@@ -99,6 +134,7 @@ export default function NightRoutine() {
   }
 
   const skip = (item) => {
+    haptics.tap()
     setStatuses((prev) => ({ ...prev, [item.id]: 'skipped' }))
   }
 
@@ -110,12 +146,32 @@ export default function NightRoutine() {
   const nightDone = nightItems.every((i) => statuses[i.id])
   const currentItem = !allDone ? nightRoutineItems[nextIndex] : null
 
-  // Phase label
   const currentPhase = currentItem?.phase === 'bed' ? 'Bed Routine' : 'Night Routine'
-  const phaseIndex = currentItem?.phase === 'bed'
-    ? bedItems.findIndex((i) => i.id === currentItem.id) + 1
-    : nightItems.findIndex((i) => i.id === currentItem?.id) + 1
-  const phaseTotal = currentItem?.phase === 'bed' ? bedItems.length : nightItems.length
+  const phaseItems = currentItem?.phase === 'bed' ? bedItems : nightItems
+  const phaseIndex = phaseItems.findIndex((i) => i.id === currentItem?.id) + 1
+  const phaseTotal = phaseItems.length
+
+  // Dots for current phase
+  const phaseDots = phaseItems.map((item, i) => (
+    <div
+      key={item.id}
+      className={`rounded-full transition-all duration-300 ${
+        i < phaseIndex - 1 ? 'h-[6px] w-[6px] bg-white/40' :
+        i === phaseIndex - 1 ? 'h-[6px] w-5 bg-white' :
+        'h-[6px] w-[6px] bg-white/[0.08]'
+      }`}
+    />
+  ))
+
+  // Check if just completed everything
+  useEffect(() => {
+    if (allDone && Object.keys(statuses).length > 0) {
+      setShowConfetti(true)
+      sounds.success()
+      haptics.success()
+      setTimeout(() => setShowConfetti(false), 2500)
+    }
+  }, [allDone]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Completion ────────────────────────────────────
   if (allDone) {
@@ -123,13 +179,25 @@ export default function NightRoutine() {
     const skippedCount = nightRoutineItems.filter((i) => statuses[i.id] === 'skipped').length
 
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-6 px-6 py-10 text-center">
-        <h2 className="text-2xl font-semibold">Day complete.</h2>
-        <div className="space-y-2 text-sm text-gray-400">
-          <p>✅ {doneCount} completed</p>
-          {skippedCount > 0 && <p>⏭ {skippedCount} skipped</p>}
-        </div>
-        <p className="text-xs text-gray-600">Rest well. Tomorrow starts fresh.</p>
+      <div className="flex flex-1 flex-col items-center justify-center gap-8 px-6 text-center">
+        <Confetti active={showConfetti} />
+        <motion.div
+          initial={{ scale: 0.92, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+        >
+          <h1 className="text-[28px] font-bold tracking-tight">Day complete.</h1>
+          <div className="mt-4 flex items-center justify-center gap-3 text-[15px] text-white/35">
+            <span>{doneCount} completed</span>
+            {skippedCount > 0 && (
+              <>
+                <span className="h-1 w-1 rounded-full bg-white/15" />
+                <span>{skippedCount} skipped</span>
+              </>
+            )}
+          </div>
+          <p className="mt-6 text-[13px] text-white/15">Rest well. Tomorrow starts fresh.</p>
+        </motion.div>
       </div>
     )
   }
@@ -137,35 +205,38 @@ export default function NightRoutine() {
   // ─── Transition screen: Night → Bed ────────────────
   if (nightDone && currentItem?.phase === 'bed' && !statuses.__bedStarted) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-8 px-6 py-10 text-center">
-        <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Night routine done</p>
-          <h2 className="mt-2 text-2xl font-semibold">Bed Routine</h2>
-          <p className="mt-2 text-sm text-gray-400">Final wind-down. 4 items.</p>
-        </div>
-        <button
-          onClick={() => setStatuses((prev) => ({ ...prev, __bedStarted: true }))}
-          className="w-full border border-white/20 bg-white/10 px-4 py-3 text-xs uppercase tracking-[0.3em] text-white"
+      <div className="flex flex-1 flex-col items-center justify-center gap-8 px-6 text-center">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
         >
-          Continue →
-        </button>
+          <p className="text-[13px] font-medium uppercase tracking-widest text-white/25">Night routine done</p>
+          <h1 className="mt-2 text-[28px] font-bold tracking-tight">Bed Routine</h1>
+          <p className="mt-2 text-[15px] text-white/35">Final wind-down. 4 items.</p>
+        </motion.div>
+        <motion.button
+          whileTap={{ scale: 0.97 }}
+          onClick={() => {
+            haptics.tap()
+            setStatuses((prev) => ({ ...prev, __bedStarted: true }))
+          }}
+          className="w-full rounded-2xl bg-white/[0.08] px-5 py-[18px] text-[15px] font-semibold text-white"
+        >
+          Continue
+        </motion.button>
       </div>
     )
   }
 
   // ─── Card ──────────────────────────────────────────
   return (
-    <div className="flex h-full flex-col">
-      {/* Progress bar */}
-      <div className="flex items-center gap-2 px-4 pt-4 pb-2">
-        <span className="text-xs uppercase tracking-wider text-gray-500">{currentPhase}</span>
-        <span className="ml-auto text-xs text-gray-600">{phaseIndex} / {phaseTotal}</span>
-      </div>
-      <div className="mx-4 h-0.5 bg-white/10">
-        <div
-          className="h-full bg-white/30 transition-all duration-300"
-          style={{ width: `${(phaseIndex / phaseTotal) * 100}%` }}
-        />
+    <div className="flex flex-1 flex-col px-6">
+      {/* Progress dots */}
+      <div className="flex items-center gap-1.5 pt-6 pb-2">
+        {phaseDots}
+        <span className="ml-auto text-[13px] font-medium text-white/25">
+          {currentPhase}
+        </span>
       </div>
 
       <AnimatePresence mode="wait">
@@ -175,38 +246,43 @@ export default function NightRoutine() {
           initial="enter"
           animate="center"
           exit="exit"
-          transition={{ duration: 0.35, ease: 'easeOut' }}
-          className="flex flex-1 flex-col items-center justify-center gap-6 px-6 py-10 text-center"
+          transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+          className="flex flex-1 flex-col justify-center"
         >
-          <div>
-            <h2 className="text-2xl font-semibold">{currentItem.title}</h2>
-            <p className="mt-2 text-sm text-gray-400">{currentItem.description}</p>
+          <div className="text-center">
+            <h1 className="text-[28px] font-bold tracking-tight">{currentItem.title}</h1>
+            <p className="mt-3 text-[15px] text-white/40">{currentItem.description}</p>
           </div>
-
-          {currentItem.lunaLink && (
-            <a
-              href="https://t.me/limitless_luna_bot"
-              target="_blank"
-              rel="noreferrer"
-              className="w-full border border-white/20 bg-white/10 px-4 py-3 text-center text-sm uppercase tracking-wider text-white"
-            >
-              💬 Open Luna →
-            </a>
-          )}
-
-          <HoldButton
-            onComplete={() => markDone(currentItem)}
-            label="Hold — Done"
-          />
-
-          <button
-            onClick={() => skip(currentItem)}
-            className="text-xs uppercase tracking-[0.25em] text-gray-600"
-          >
-            Skip
-          </button>
         </motion.div>
       </AnimatePresence>
+
+      {/* Actions */}
+      <div className="space-y-3 pb-8">
+        {currentItem.lunaLink && (
+          <motion.a
+            whileTap={{ scale: 0.97 }}
+            href="https://t.me/limitless_luna_bot"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-center rounded-2xl bg-white/[0.06] px-5 py-3.5 text-[15px] font-medium text-white/50"
+            onClick={() => haptics.tap()}
+          >
+            Open Luna
+          </motion.a>
+        )}
+
+        <HoldButton
+          onComplete={() => markDone(currentItem)}
+          label={'Hold \u2014 Done'}
+        />
+
+        <button
+          onClick={() => skip(currentItem)}
+          className="mx-auto block py-2 text-[13px] font-medium text-white/20 active:text-white/40"
+        >
+          Skip
+        </button>
+      </div>
     </div>
   )
 }

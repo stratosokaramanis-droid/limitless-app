@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
+import { haptics } from '../utils/haptics.js'
+import { sounds } from '../utils/sounds.js'
 
 const HOLD_DURATION = 1000
 
@@ -12,6 +14,7 @@ export default function HabitCard({
 }) {
   const [isHolding, setIsHolding] = useState(false)
   const [progress, setProgress] = useState(0)
+  const [completed, setCompleted] = useState(false)
   const rafRef = useRef(null)
   const startRef = useRef(null)
 
@@ -27,7 +30,10 @@ export default function HabitCard({
       if (nextProgress >= 1) {
         setIsHolding(false)
         startRef.current = null
-        onDone()
+        setCompleted(true)
+        haptics.success()
+        sounds.complete()
+        setTimeout(onDone, 350)
         return
       }
 
@@ -43,6 +49,7 @@ export default function HabitCard({
   }, [isHolding, onDone])
 
   const handlePointerDown = () => {
+    haptics.tap()
     setProgress(0)
     startRef.current = null
     setIsHolding(true)
@@ -55,82 +62,103 @@ export default function HabitCard({
     }
   }
 
-  const circumference = 2 * Math.PI * 22
-  const dashOffset = circumference * (1 - progress)
+  // Step dots
+  const dots = Array.from({ length: total }, (_, i) => (
+    <div
+      key={i}
+      className={`rounded-full transition-all duration-300 ${
+        i < index ? 'h-[6px] w-[6px] bg-white/40' :
+        i === index ? 'h-[6px] w-5 bg-white' :
+        'h-[6px] w-[6px] bg-white/[0.08]'
+      }`}
+    />
+  ))
 
   return (
-    <div className="flex h-full flex-col justify-between bg-card px-6 py-8 text-left">
-      <div>
-        <div className="mb-4">
-          <div className="h-1 w-full bg-white/10">
-            <div
-              className="h-1 bg-accent"
-              style={{ width: `${((index + 1) / total) * 100}%` }}
-            />
-          </div>
-          <p className="mt-2 text-xs uppercase tracking-[0.2em] text-gray-400">
-            Step {index + 1}/{total}
-          </p>
-        </div>
-
-        <div className="space-y-3">
-          <h2 className="text-2xl font-semibold text-white">{item.title}</h2>
-          <p className="text-base leading-relaxed text-gray-400">
-            {item.description}
-          </p>
-        </div>
+    <div className="flex h-full flex-col px-6">
+      {/* Progress dots */}
+      <div className="flex items-center gap-1.5 pt-6 pb-2">
+        {dots}
+        <span className="ml-auto text-[13px] font-medium tabular-nums text-white/25">
+          {index + 1}/{total}
+        </span>
       </div>
 
-      <div className="space-y-4">
-        {item.needsPulse ? (
-          <a
-            className="block w-full border border-white/20 bg-transparent px-4 py-3 text-center text-sm uppercase tracking-wider text-white transition hover:border-white"
+      {/* Content */}
+      <div className="flex flex-1 flex-col justify-center">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.35, ease: [0.25, 0.46, 0.45, 0.94] }}
+        >
+          <h1 className="text-[28px] font-bold tracking-tight leading-tight text-white">
+            {item.title}
+          </h1>
+          <p className="mt-3 text-[17px] leading-relaxed text-white/40">
+            {item.description}
+          </p>
+        </motion.div>
+      </div>
+
+      {/* Actions */}
+      <div className="space-y-3 pb-8">
+        {item.needsPulse && (
+          <motion.a
+            whileTap={{ scale: 0.97 }}
+            className="flex items-center justify-center rounded-2xl bg-white/[0.06] px-5 py-3.5 text-[15px] font-medium text-white/50"
             href="https://t.me/limitless_pulse_bot"
             target="_blank"
             rel="noreferrer"
+            onClick={() => haptics.tap()}
           >
-            📲 Open Pulse →
-          </a>
-        ) : null}
+            Open Pulse
+          </motion.a>
+        )}
 
-        <button
-          className="group relative flex w-full items-center justify-center gap-3 border border-white/20 bg-white/10 px-4 py-4 text-sm uppercase tracking-widest text-white"
+        <motion.button
+          whileTap={!isHolding ? { scale: 0.97 } : undefined}
           onPointerDown={handlePointerDown}
           onPointerUp={handlePointerUp}
           onPointerLeave={handlePointerUp}
           onPointerCancel={handlePointerUp}
+          className="relative w-full overflow-hidden rounded-2xl bg-white/[0.08] px-5 py-[18px]"
+          animate={isHolding ? { scale: [0.98, 1.02, 0.98] } : { scale: 1 }}
+          transition={isHolding ? { repeat: Infinity, duration: 0.6 } : {}}
         >
-          <div className="relative h-12 w-12">
-            <svg className="h-12 w-12 -rotate-90" viewBox="0 0 60 60">
-              <circle
-                cx="30"
-                cy="30"
-                r="22"
-                stroke="rgba(255,255,255,0.2)"
-                strokeWidth="4"
-                fill="none"
-              />
-              <motion.circle
-                cx="30"
-                cy="30"
-                r="22"
-                stroke="#E8E8E8"
-                strokeWidth="4"
-                fill="none"
-                strokeLinecap="round"
-                strokeDasharray={circumference}
-                animate={{ strokeDashoffset: dashOffset }}
-              />
-            </svg>
-          </div>
-          <span className="text-sm">Hold to Done</span>
-        </button>
+          <div
+            className="absolute inset-0 bg-white/[0.12]"
+            style={{ width: `${progress * 100}%`, transition: 'none' }}
+          />
+          <AnimatePresence mode="wait" initial={false}>
+            {completed ? (
+              <motion.span
+                key="check"
+                initial={{ scale: 0.5, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                className="relative block text-[15px] font-semibold text-white"
+              >
+                Done
+              </motion.span>
+            ) : (
+              <motion.span
+                key="label"
+                className="relative block text-[15px] font-semibold text-white"
+              >
+                {isHolding ? 'Holding...' : 'Hold \u2014 Done'}
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </motion.button>
 
         <button
-          onClick={onSkip}
-          className="mx-auto block text-xs uppercase tracking-[0.25em] text-gray-500"
+          onClick={() => {
+            haptics.tap()
+            onSkip()
+          }}
+          className="mx-auto block py-2 text-[13px] font-medium text-white/20 active:text-white/40"
         >
-          skip
+          Skip
         </button>
       </div>
     </div>

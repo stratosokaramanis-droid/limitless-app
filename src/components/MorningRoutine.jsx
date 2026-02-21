@@ -6,9 +6,9 @@ import WorkSessions from './WorkSessions.jsx'
 import NightRoutine from './NightRoutine.jsx'
 
 const slideVariants = {
-  enter: { x: 120, opacity: 0 },
-  center: { x: 0, opacity: 1 },
-  exit: { x: -120, opacity: 0 }
+  enter: { x: 60, opacity: 0, scale: 0.98 },
+  center: { x: 0, opacity: 1, scale: 1 },
+  exit: { x: -60, opacity: 0, scale: 0.98 }
 }
 
 export default function MorningRoutine({
@@ -56,7 +56,7 @@ export default function MorningRoutine({
   const currentItem = items[nextIndex]
 
   return (
-    <div className="h-full">
+    <div className="flex-1 flex flex-col">
       <AnimatePresence mode="wait">
         <motion.div
           key={currentItem.id}
@@ -64,8 +64,8 @@ export default function MorningRoutine({
           initial="enter"
           animate="center"
           exit="exit"
-          transition={{ duration: 0.35, ease: 'easeOut' }}
-          className="h-full"
+          transition={{ type: 'spring', stiffness: 300, damping: 30 }}
+          className="flex-1 flex flex-col"
         >
           <HabitCard
             item={currentItem}

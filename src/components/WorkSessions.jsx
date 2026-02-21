@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
+import { motion } from 'framer-motion'
+import { haptics } from '../utils/haptics.js'
+import { sounds } from '../utils/sounds.js'
+import Confetti from './Confetti.jsx'
 
 const SESSION_MS = 90 * 60 * 1000 // 90 min
 const BREAK_MS = 10 * 60 * 1000   // 10 min
@@ -33,30 +37,34 @@ function derivePhase(l) {
 }
 
 function SessionDots({ phase, session }) {
-  const statuses = [1, 2, 3].map((n) => {
-    if (phase === 'done') return 'done'
-    if (n < session) return 'done'
-    if (n === session) return phase === 'running' ? 'active' : 'next'
-    return 'upcoming'
-  })
-
   return (
-    <div className="flex items-center gap-2">
-      {statuses.map((s, i) => (
-        <div key={i} className="flex items-center gap-2">
-          {i > 0 && <div className="h-px w-4 bg-white/10" />}
-          <div
-            className={`flex h-5 w-5 items-center justify-center text-xs
-              ${s === 'done' ? 'text-white/60' : ''}
-              ${s === 'active' ? 'text-white' : ''}
-              ${s === 'next' ? 'text-white/40' : ''}
-              ${s === 'upcoming' ? 'text-white/20' : ''}
-            `}
-          >
-            {s === 'done' ? '✓' : `${i + 1}`}
+    <div className="flex items-center gap-2.5">
+      {[1, 2, 3].map((n, i) => {
+        let state = 'upcoming'
+        if (phase === 'done') state = 'done'
+        else if (session && n < session) state = 'done'
+        else if (session && n === session) state = phase === 'running' ? 'active' : 'next'
+        else if (!session && phase === 'break') state = n === 1 ? 'done' : n === 2 ? 'next' : 'upcoming'
+        else if (!session && phase === 'lunch') state = n <= 2 ? 'done' : 'next'
+
+        return (
+          <div key={n} className="flex items-center gap-2.5">
+            {i > 0 && (
+              <div className={`h-[1px] w-6 transition-colors duration-300 ${
+                state === 'done' || state === 'active' ? 'bg-white/20' : 'bg-white/[0.06]'
+              }`} />
+            )}
+            <div className={`flex h-8 w-8 items-center justify-center rounded-full text-[13px] font-semibold transition-all duration-300
+              ${state === 'done' ? 'bg-white text-black' : ''}
+              ${state === 'active' ? 'bg-white/[0.12] text-white ring-2 ring-white/10' : ''}
+              ${state === 'next' ? 'bg-white/[0.06] text-white/40' : ''}
+              ${state === 'upcoming' ? 'bg-white/[0.03] text-white/15' : ''}
+            `}>
+              {state === 'done' ? '\u2713' : n}
+            </div>
           </div>
-        </div>
-      ))}
+        )
+      })}
     </div>
   )
 }
@@ -71,6 +79,7 @@ export default function WorkSessions({ onEnterNightMode }) {
     }
   })
   const [now, setNow] = useState(Date.now())
+  const [showConfetti, setShowConfetti] = useState(false)
 
   // Persist local state
   useEffect(() => {
@@ -119,6 +128,8 @@ export default function WorkSessions({ onEnterNightMode }) {
   const { phase, session } = useMemo(() => derivePhase(local), [local])
 
   const startSession = (id) => {
+    haptics.heavy()
+    sounds.tap()
     const ts = new Date().toISOString()
     if (id === 1) setLocal((prev) => ({ ...prev, s1Start: ts }))
     if (id === 2) setLocal((prev) => ({ ...prev, s2Start: ts }))
@@ -126,10 +137,17 @@ export default function WorkSessions({ onEnterNightMode }) {
   }
 
   const endSession = (id) => {
+    haptics.success()
+    sounds.complete()
     const ts = new Date().toISOString()
     if (id === 1) setLocal((prev) => ({ ...prev, s1End: ts }))
     if (id === 2) setLocal((prev) => ({ ...prev, s2End: ts }))
-    if (id === 3) setLocal((prev) => ({ ...prev, s3End: ts }))
+    if (id === 3) {
+      setLocal((prev) => ({ ...prev, s3End: ts }))
+      setShowConfetti(true)
+      sounds.success()
+      setTimeout(() => setShowConfetti(false), 2500)
+    }
   }
 
   const sessionTimer = useMemo(() => {
@@ -152,26 +170,36 @@ export default function WorkSessions({ onEnterNightMode }) {
   // ── DONE ──────────────────────────────────────────
   if (phase === 'done') {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-8 px-6 py-10 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-8 px-6 text-center">
+        <Confetti active={showConfetti} />
         <SessionDots phase="done" session={null} />
-        <div>
-          <h2 className="text-2xl font-semibold">Work sessions complete.</h2>
-          <p className="mt-2 text-sm text-gray-400">3 of 3 done. Go rest.</p>
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <h1 className="text-[28px] font-bold tracking-tight">Sessions complete.</h1>
+          <p className="mt-2 text-[15px] text-white/35">3 of 3 done. Go rest.</p>
+        </motion.div>
+        <div className="w-full space-y-3">
+          <motion.a
+            whileTap={{ scale: 0.97 }}
+            href="https://t.me/limitless_forge_bot"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-center rounded-2xl bg-white/[0.06] px-5 py-3.5 text-[15px] font-medium text-white/50"
+          >
+            Review with Forge
+          </motion.a>
+          <button
+            onClick={() => {
+              haptics.tap()
+              onEnterNightMode()
+            }}
+            className="mx-auto block py-2 text-[13px] font-medium text-white/20"
+          >
+            Night Mode
+          </button>
         </div>
-        <a
-          href="https://t.me/limitless_forge_bot"
-          target="_blank"
-          rel="noreferrer"
-          className="w-full border border-white/20 bg-white/10 px-4 py-3 text-center text-sm uppercase tracking-wider text-white"
-        >
-          💬 Review with Forge →
-        </a>
-        <button
-          onClick={onEnterNightMode}
-          className="text-xs uppercase tracking-[0.25em] text-gray-500"
-        >
-          Enter Night Mode
-        </button>
       </div>
     )
   }
@@ -179,21 +207,22 @@ export default function WorkSessions({ onEnterNightMode }) {
   // ── BREAK (between session 1 and 2) ───────────────
   if (phase === 'break') {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-8 px-6 py-10 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-8 px-6 text-center">
         <SessionDots phase="break" session={2} />
         <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Break</p>
-          <h2 className="mt-1 text-2xl font-semibold">10 minutes</h2>
+          <p className="text-[13px] font-medium uppercase tracking-widest text-white/25">Break</p>
+          <h1 className="mt-1 text-[28px] font-bold tracking-tight">10 minutes</h1>
         </div>
-        <div className={`font-mono text-5xl tracking-[0.15em] ${breakTimer.over ? 'text-red-400' : 'text-white'}`}>
-          {breakTimer.str}
+        <div className={`font-mono text-[56px] font-extralight tracking-[0.04em] tabular-nums ${breakTimer.over ? 'text-red-400/80' : 'text-white'}`}>
+          {breakTimer.over ? `+${breakTimer.str}` : breakTimer.str}
         </div>
-        <button
+        <motion.button
+          whileTap={{ scale: 0.97 }}
           onClick={() => startSession(2)}
-          className="w-full border border-white/20 bg-white/10 px-4 py-3 text-xs uppercase tracking-[0.3em] text-white"
+          className="w-full rounded-2xl bg-white/[0.08] px-5 py-[18px] text-[15px] font-semibold text-white"
         >
-          Start Session 2 →
-        </button>
+          Start Session 2
+        </motion.button>
       </div>
     )
   }
@@ -201,21 +230,22 @@ export default function WorkSessions({ onEnterNightMode }) {
   // ── LUNCH (between session 2 and 3) ───────────────
   if (phase === 'lunch') {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-8 px-6 py-10 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-8 px-6 text-center">
         <SessionDots phase="lunch" session={3} />
         <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-gray-500">Lunch Break</p>
-          <h2 className="mt-1 text-2xl font-semibold">30 minutes</h2>
+          <p className="text-[13px] font-medium uppercase tracking-widest text-white/25">Lunch</p>
+          <h1 className="mt-1 text-[28px] font-bold tracking-tight">30 minutes</h1>
         </div>
-        <div className={`font-mono text-5xl tracking-[0.15em] ${lunchTimer.over ? 'text-red-400' : 'text-white'}`}>
-          {lunchTimer.str}
+        <div className={`font-mono text-[56px] font-extralight tracking-[0.04em] tabular-nums ${lunchTimer.over ? 'text-red-400/80' : 'text-white'}`}>
+          {lunchTimer.over ? `+${lunchTimer.str}` : lunchTimer.str}
         </div>
-        <button
+        <motion.button
+          whileTap={{ scale: 0.97 }}
           onClick={() => startSession(3)}
-          className="w-full border border-white/20 bg-white/10 px-4 py-3 text-xs uppercase tracking-[0.3em] text-white"
+          className="w-full rounded-2xl bg-white/[0.08] px-5 py-[18px] text-[15px] font-semibold text-white"
         >
-          Start Session 3 →
-        </button>
+          Start Session 3
+        </motion.button>
       </div>
     )
   }
@@ -223,55 +253,97 @@ export default function WorkSessions({ onEnterNightMode }) {
   // ── PRE-SESSION ────────────────────────────────────
   if (phase === 'pre') {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-8 px-6 py-10 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-8 px-6 text-center">
         <SessionDots phase="pre" session={session} />
-        <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-gray-500">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+        >
+          <p className="text-[13px] font-medium uppercase tracking-widest text-white/25">
             Session {session} of 3
           </p>
-          <h2 className="mt-1 text-2xl font-semibold">90 minutes</h2>
-        </div>
-        <div className="font-mono text-5xl tracking-[0.15em] text-white/20">
+          <h1 className="mt-1 text-[28px] font-bold tracking-tight">90 minutes</h1>
+        </motion.div>
+        <div className="font-mono text-[56px] font-extralight tracking-[0.04em] tabular-nums text-white/15">
           90:00
         </div>
-        <a
-          href="https://t.me/limitless_forge_bot"
-          target="_blank"
-          rel="noreferrer"
-          onClick={() => startSession(session)}
-          className="w-full border border-white/20 bg-white/10 px-4 py-3 text-center text-sm uppercase tracking-wider text-white"
-        >
-          💬 Start Session →
-        </a>
-        <p className="text-xs text-gray-600">Tell Forge what you're building</p>
+        <div className="w-full space-y-3">
+          <motion.button
+            whileTap={{ scale: 0.97 }}
+            onClick={() => startSession(session)}
+            className="w-full rounded-2xl bg-white/[0.08] px-5 py-[18px] text-[15px] font-semibold text-white"
+          >
+            Start Timer
+          </motion.button>
+          <motion.a
+            whileTap={{ scale: 0.97 }}
+            href="https://t.me/limitless_forge_bot"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-center py-2 text-[13px] font-medium text-white/25"
+          >
+            Talk to Forge
+          </motion.a>
+        </div>
       </div>
     )
   }
 
   // ── RUNNING ────────────────────────────────────────
   if (phase === 'running') {
+    const startKey = session === 1 ? local.s1Start : session === 2 ? local.s2Start : local.s3Start
+    const elapsedMs = startKey ? now - new Date(startKey).getTime() : 0
+    const pct = Math.min(elapsedMs / SESSION_MS, 1)
+    const circumference = 2 * Math.PI * 54
+    const offset = circumference * (1 - pct)
+
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-8 px-6 py-10 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-8 px-6 text-center">
         <SessionDots phase="running" session={session} />
         <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-gray-500">
+          <p className="text-[13px] font-medium uppercase tracking-widest text-white/25">
             Session {session} of 3
           </p>
-          <h2 className="mt-1 text-2xl font-semibold">In Progress</h2>
         </div>
-        <div className={`font-mono text-5xl tracking-[0.15em] ${sessionTimer.over ? 'text-red-400' : 'text-white'}`}>
-          {sessionTimer.over ? `+${sessionTimer.str}` : sessionTimer.str}
+
+        {/* Timer with progress ring */}
+        <div className="relative flex items-center justify-center">
+          <svg className="h-40 w-40 -rotate-90" viewBox="0 0 120 120">
+            <circle cx="60" cy="60" r="54" stroke="rgba(255,255,255,0.04)" strokeWidth="3" fill="none" />
+            <motion.circle
+              cx="60" cy="60" r="54"
+              stroke={sessionTimer.over ? 'rgba(255,69,58,0.5)' : 'rgba(255,255,255,0.15)'}
+              strokeWidth="3"
+              fill="none"
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              animate={{ strokeDashoffset: offset }}
+              transition={{ duration: 0.5 }}
+            />
+          </svg>
+          <div className={`absolute font-mono text-[36px] font-extralight tracking-[0.04em] tabular-nums ${sessionTimer.over ? 'text-red-400/80' : 'text-white'}`}>
+            {sessionTimer.over ? `+${sessionTimer.str}` : sessionTimer.str}
+          </div>
         </div>
-        <a
-          href="https://t.me/limitless_forge_bot"
-          target="_blank"
-          rel="noreferrer"
-          onClick={() => endSession(session)}
-          className="w-full border border-white/20 bg-white/10 px-4 py-3 text-center text-sm uppercase tracking-wider text-white"
-        >
-          💬 End Session →
-        </a>
-        <p className="text-xs text-gray-600">Debrief with Forge · scores + votes</p>
+
+        <div className="w-full space-y-3">
+          <motion.button
+            whileTap={{ scale: 0.97 }}
+            onClick={() => endSession(session)}
+            className="w-full rounded-2xl bg-white/[0.08] px-5 py-[18px] text-[15px] font-semibold text-white"
+          >
+            End Timer
+          </motion.button>
+          <motion.a
+            whileTap={{ scale: 0.97 }}
+            href="https://t.me/limitless_forge_bot"
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center justify-center py-2 text-[13px] font-medium text-white/25"
+          >
+            Talk to Forge
+          </motion.a>
+        </div>
       </div>
     )
   }

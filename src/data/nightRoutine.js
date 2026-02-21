@@ -5,7 +5,7 @@ const nightRoutine = [
   // ─── Night Routine ──────────────────────────────────
   {
     id: 'letting-go',
-    title: '🌊 Letting Go',
+    title: 'Letting Go',
     description: 'Meditation to release the day\'s tension.',
     phase: 'night',
     field: 'letGoCompleted',
@@ -14,7 +14,7 @@ const nightRoutine = [
   },
   {
     id: 'nervous-system',
-    title: '🧘 Regulate',
+    title: 'Regulate',
     description: 'Nervous system regulation exercise.',
     phase: 'night',
     field: 'nervousSystemCompleted',
@@ -23,7 +23,7 @@ const nightRoutine = [
   },
   {
     id: 'plan-tomorrow',
-    title: '📋 Plan Tomorrow',
+    title: 'Plan Tomorrow',
     description: 'Write tomorrow\'s plan. Talk it through with Luna.',
     phase: 'night',
     field: 'planCompleted',
@@ -34,7 +34,7 @@ const nightRoutine = [
   // ─── Bed Routine ────────────────────────────────────
   {
     id: 'finalize-plan',
-    title: '✅ Finalize Plan',
+    title: 'Finalize Plan',
     description: 'Send final plan to Luna — text or photo.',
     phase: 'bed',
     field: null, // no separate field, part of plan flow
@@ -43,7 +43,7 @@ const nightRoutine = [
   },
   {
     id: 'read-prompts',
-    title: '❓ Read Prompts',
+    title: 'Read Prompts',
     description: 'Review prompt questions. Discuss with Luna if you want.',
     phase: 'bed',
     field: 'promptsReviewed',
@@ -52,7 +52,7 @@ const nightRoutine = [
   },
   {
     id: 'affirmations',
-    title: '🔥 Affirmations',
+    title: 'Affirmations',
     description: 'Read your affirmations.',
     phase: 'bed',
     field: 'affirmationsReviewed',
@@ -61,7 +61,7 @@ const nightRoutine = [
   },
   {
     id: 'alter-memories',
-    title: '🧠 Alter Memories',
+    title: 'Alter Memories',
     description: 'Luna gives you today\'s negative votes for the meditation.',
     phase: 'bed',
     field: 'alterMemoriesCompleted',

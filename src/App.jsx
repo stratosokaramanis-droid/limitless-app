@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import BottomNav from './components/BottomNav.jsx'
+import DashboardTab from './components/DashboardTab.jsx'
 import MorningRoutine from './components/MorningRoutine.jsx'
 import BadgesTab from './components/BadgesTab.jsx'
 import StateTab from './components/StateTab.jsx'
 import StatsTab from './components/StatsTab.jsx'
 import morningRoutine from './data/morningRoutine.js'
+import DevPanel from './components/DevPanel.jsx'
 
 const STORAGE_KEYS = {
   statuses: 'limitless_morning_statuses',
@@ -27,7 +30,7 @@ const loadJson = (key, fallback) => {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('today')
+  const [activeTab, setActiveTab] = useState('home')
   const [statuses, setStatuses] = useState(() => loadJson(STORAGE_KEYS.statuses, {}))
   const [currentView, setCurrentView] = useState(() =>
     localStorage.getItem(STORAGE_KEYS.currentView) || 'morning-routine'
@@ -72,14 +75,13 @@ export default function App() {
         for (const item of data.items) {
           serverStatuses[item.id] = item.status
         }
-        // Merge: server wins for any items we don't have locally
         setStatuses((prev) => {
           const merged = { ...serverStatuses, ...prev }
           localStorage.setItem(STORAGE_KEYS.statuses, JSON.stringify(merged))
           return merged
         })
       })
-      .catch(() => {}) // server offline — localStorage is fine as fallback
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -135,7 +137,7 @@ export default function App() {
     }
   }
 
-  const renderToday = () => (
+  const renderFocus = () => (
     <MorningRoutine
       items={items}
       statuses={statuses}
@@ -148,18 +150,34 @@ export default function App() {
   )
 
   return (
-    <div className="min-h-screen bg-bg text-white">
-      <div className="mx-auto flex min-h-screen max-w-[430px] flex-col pb-20">
-        <main className="flex-1 p-4">
-          <div className="h-full border border-white/10 bg-card shadow-glow">
-            {activeTab === 'today' && renderToday()}
-            {activeTab === 'state' && <StateTab />}
-            {activeTab === 'badges' && <BadgesTab />}
-            {activeTab === 'stats' && <StatsTab />}
-          </div>
+    <div className="min-h-dvh bg-black text-white">
+      <div
+        className="mx-auto flex min-h-dvh max-w-[430px] flex-col"
+        style={{ paddingBottom: 'calc(68px + env(safe-area-inset-bottom, 0px))' }}
+      >
+        <main className="flex-1 flex flex-col pt-safe">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={activeTab}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12 }}
+              className="flex-1 flex flex-col"
+            >
+              {activeTab === 'home' && (
+                <DashboardTab onNavigateToFocus={() => setActiveTab('focus')} />
+              )}
+              {activeTab === 'focus' && renderFocus()}
+              {activeTab === 'state' && <StateTab />}
+              {activeTab === 'badges' && <BadgesTab />}
+              {activeTab === 'stats' && <StatsTab />}
+            </motion.div>
+          </AnimatePresence>
         </main>
       </div>
       <BottomNav activeTab={activeTab} onChange={setActiveTab} />
+      <DevPanel />
     </div>
   )
 }

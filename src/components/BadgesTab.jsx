@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { haptics } from '../utils/haptics.js'
 
 const TIER_NAMES = ['', 'Initiate', 'Apprentice', 'Practitioner', 'Adept', 'Master']
 const TIER_XP = [0, 0, 750, 3000, 10000, 30000]
@@ -15,78 +17,107 @@ function BadgeCard({ badge, progress, missions, expanded, onToggle }) {
   const activeMission = missions?.find((m) => m.badgeSlug === badge.slug && m.status === 'pending')
 
   return (
-    <div className="border border-white/10 bg-white/[0.03]">
-      {/* Header — always visible */}
-      <button
-        onClick={onToggle}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+    <motion.div
+      layout
+      className="overflow-hidden rounded-2xl bg-white/[0.03]"
+      transition={{ type: 'spring', stiffness: 400, damping: 35 }}
+    >
+      {/* Header */}
+      <motion.button
+        whileTap={{ scale: 0.98 }}
+        onClick={() => {
+          haptics.tap()
+          onToggle()
+        }}
+        className="flex w-full items-center gap-3.5 px-5 py-4 text-left"
       >
-        <span className="text-2xl">{badge.emoji}</span>
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.04]">
+          <span className="text-[20px]">{badge.emoji}</span>
+        </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-white truncate">{badge.name}</span>
+            <span className="text-[15px] font-semibold text-white truncate">{badge.name}</span>
             {streak >= 7 && (
-              <span className="text-xs text-yellow-400">🔥{streak}d</span>
+              <span className="text-[11px] font-medium text-amber-400/80">{streak}d</span>
             )}
           </div>
-          <div className="mt-1 flex items-center gap-2">
-            <span className="text-xs text-gray-500">{TIER_NAMES[tier]}</span>
-            <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-white/30 transition-all duration-500"
-                style={{ width: `${progressPct}%` }}
+          <div className="mt-1.5 flex items-center gap-2.5">
+            <span className="text-[11px] font-medium text-white/25">{TIER_NAMES[tier]}</span>
+            <div className="flex-1 h-[5px] rounded-full overflow-hidden bg-white/[0.04]">
+              <motion.div
+                className="h-full rounded-full bg-white/20"
+                initial={{ width: 0 }}
+                animate={{ width: `${progressPct}%` }}
+                transition={{ duration: 0.8, ease: 'easeOut' }}
               />
             </div>
-            <span className="text-xs tabular-nums text-gray-600">{xp}</span>
+            <span className="text-[11px] font-medium tabular-nums text-white/20">{xp}</span>
           </div>
         </div>
-        <span className={`text-xs text-gray-600 transition-transform ${expanded ? 'rotate-180' : ''}`}>▼</span>
-      </button>
+        <motion.span
+          animate={{ rotate: expanded ? 180 : 0 }}
+          transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+          className="text-[10px] text-white/15"
+        >
+          \u25BC
+        </motion.span>
+      </motion.button>
 
-      {/* Expanded details */}
-      {expanded && (
-        <div className="border-t border-white/5 px-4 py-3 space-y-3">
-          {/* Identity statement */}
-          <p className="text-xs italic text-gray-400">"{badge.identityStatement}"</p>
-
-          {/* Stats row */}
-          <div className="flex gap-4 text-xs text-gray-500">
-            <span>Tier {tier}/5</span>
-            <span>{progress?.exercisesCompleted || 0} exercises</span>
-            <span>{progress?.missionsCompleted || 0} missions</span>
-            <span>{progress?.bossEncounters || 0} bosses</span>
-          </div>
-
-          {/* XP to next tier */}
-          {nextXp && (
-            <div className="text-xs text-gray-600">
-              {nextXp - xp} XP to {TIER_NAMES[nextTier]}
-            </div>
-          )}
-
-          {/* Active mission */}
-          {activeMission && (
-            <div className="border border-white/10 bg-white/[0.02] p-3">
-              <p className="text-xs uppercase tracking-wider text-gray-500">Active Mission</p>
-              <p className="mt-1 text-sm text-white">{activeMission.title}</p>
-              <p className="mt-1 text-xs text-gray-400">{activeMission.description}</p>
-              <p className="mt-1 text-xs text-gray-600">
-                ✓ {activeMission.successCriteria} · +{activeMission.rewardXp} XP
+      {/* Expanded */}
+      <AnimatePresence>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 35 }}
+            className="overflow-hidden"
+          >
+            <div className="border-t border-white/[0.04] px-5 py-4 space-y-4">
+              {/* Identity statement */}
+              <p className="text-[13px] italic leading-relaxed text-white/30">
+                "{badge.identityStatement}"
               </p>
-            </div>
-          )}
 
-          {/* Streak info */}
-          <div className="flex gap-4 text-xs text-gray-600">
-            <span>Streak: {streak}d</span>
-            <span>Best: {progress?.longestStreak || 0}d</span>
-            {streak >= 7 && streak < 14 && <span className="text-yellow-500">1.25x XP</span>}
-            {streak >= 14 && streak < 30 && <span className="text-yellow-500">1.5x XP</span>}
-            {streak >= 30 && <span className="text-yellow-400">2.0x XP</span>}
-          </div>
-        </div>
-      )}
-    </div>
+              {/* Stats */}
+              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-white/20">
+                <span>Tier {tier}/5</span>
+                <span>{progress?.exercisesCompleted || 0} exercises</span>
+                <span>{progress?.missionsCompleted || 0} missions</span>
+                <span>{progress?.bossEncounters || 0} bosses</span>
+              </div>
+
+              {nextXp && (
+                <p className="text-[12px] text-white/15">
+                  {nextXp - xp} XP to {TIER_NAMES[nextTier]}
+                </p>
+              )}
+
+              {/* Active mission */}
+              {activeMission && (
+                <div className="rounded-xl bg-white/[0.03] p-4">
+                  <p className="text-[11px] font-medium uppercase tracking-widest text-white/20">Active Mission</p>
+                  <p className="mt-1.5 text-[14px] font-medium text-white">{activeMission.title}</p>
+                  <p className="mt-1 text-[13px] leading-relaxed text-white/35">{activeMission.description}</p>
+                  <p className="mt-2 text-[12px] text-white/20">
+                    {activeMission.successCriteria} · +{activeMission.rewardXp} XP
+                  </p>
+                </div>
+              )}
+
+              {/* Streak */}
+              <div className="flex items-center gap-3 text-[12px] text-white/20">
+                <span>Streak: {streak}d</span>
+                <span>Best: {progress?.longestStreak || 0}d</span>
+                {streak >= 7 && streak < 14 && <span className="text-amber-400/60">1.25x</span>}
+                {streak >= 14 && streak < 30 && <span className="text-amber-400/60">1.5x</span>}
+                {streak >= 30 && <span className="text-amber-400/70">2.0x</span>}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
   )
 }
 
@@ -114,37 +145,40 @@ export default function BadgesTab() {
 
   if (error) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-sm text-gray-500">
-        Could not load badges. Is the file server running?
+      <div className="flex flex-1 items-center justify-center p-6 text-[15px] text-white/25">
+        Could not load badges.
       </div>
     )
   }
 
   if (!badges) {
     return (
-      <div className="flex h-full items-center justify-center p-6 text-sm text-gray-600">
-        Loading...
+      <div className="flex flex-1 items-center justify-center">
+        <div className="h-7 w-7 animate-spin rounded-full border-2 border-white/10 border-t-white/40" />
       </div>
     )
   }
 
   const totalXp = badges.badges.reduce((sum, b) => sum + (progress?.badges?.[b.slug]?.xp || 0), 0)
   const avgTier = badges.badges.reduce((sum, b) => sum + (progress?.badges?.[b.slug]?.tier || 1), 0) / badges.badges.length
+  const activeMissions = missions?.active?.filter((m) => m.status === 'pending').length || 0
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex flex-1 flex-col">
       {/* Header */}
-      <div className="px-4 pt-4 pb-3">
-        <h2 className="text-lg font-semibold">Mental Badges</h2>
-        <div className="mt-1 flex gap-4 text-xs text-gray-500">
-          <span>{totalXp} total XP</span>
-          <span>Avg tier: {avgTier.toFixed(1)}</span>
-          <span>{missions?.active?.filter((m) => m.status === 'pending').length || 0} active missions</span>
+      <div className="px-6 pt-8 pb-4">
+        <h1 className="text-[28px] font-bold tracking-tight">Badges</h1>
+        <div className="mt-2 flex items-center gap-3 text-[13px] text-white/25">
+          <span>{totalXp} XP</span>
+          <span className="h-1 w-1 rounded-full bg-white/10" />
+          <span>Tier {avgTier.toFixed(1)}</span>
+          <span className="h-1 w-1 rounded-full bg-white/10" />
+          <span>{activeMissions} active</span>
         </div>
       </div>
 
       {/* Badge list */}
-      <div className="flex-1 space-y-1 overflow-y-auto px-4 pb-4">
+      <div className="flex-1 overflow-y-auto no-scrollbar px-6 pb-6 space-y-2">
         {badges.badges.map((badge) => (
           <BadgeCard
             key={badge.slug}
