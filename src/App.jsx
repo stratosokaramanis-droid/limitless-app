@@ -150,9 +150,9 @@ export default function App() {
   )
 
   return (
-    <div className="min-h-dvh bg-black text-white">
+    <div className="h-dvh overflow-hidden bg-black text-white">
       <div
-        className="mx-auto flex min-h-dvh max-w-[430px] flex-col"
+        className="mx-auto flex h-dvh max-w-[430px] flex-col"
         style={{ paddingBottom: 'calc(68px + env(safe-area-inset-bottom, 0px))' }}
       >
         <main className="flex-1 flex flex-col pt-safe">
