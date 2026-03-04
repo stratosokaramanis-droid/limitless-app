@@ -130,15 +130,32 @@ export default function MorningRoutine({
   }
 
   // Special views
-  if (currentView === 'night-routine') return <NightRoutine onNewDay={onNewDay} />
-  if (currentView === 'work-sessions') return <WorkSessions onEnterNightMode={() => onViewChange('night-routine')} />
+  if (currentView === 'night-routine') {
+    return (
+      <div className="flex flex-1 flex-col">
+        <button type="button" onClick={() => onViewChange('morning-routine')} className="px-6 pt-6 pb-2 text-left text-[13px] font-medium text-white/30">← Back</button>
+        <NightRoutine onNewDay={onNewDay} />
+      </div>
+    )
+  }
+  if (currentView === 'work-sessions') {
+    return (
+      <div className="flex flex-1 flex-col">
+        <button type="button" onClick={() => onViewChange('morning-routine')} className="px-6 pt-6 pb-2 text-left text-[13px] font-medium text-white/30">← Back</button>
+        <WorkSessions onEnterNightMode={() => onViewChange('night-routine')} />
+      </div>
+    )
+  }
   if (currentView === 'creative-block') {
     return (
-      <CreativeBlock
-        startTime={creativeBlockStartTime}
-        onStart={onStartCreativeBlock}
-        onEnterWorkSessions={() => onViewChange('work-sessions')}
-      />
+      <div className="flex flex-1 flex-col">
+        <button type="button" onClick={() => onViewChange('morning-routine')} className="px-6 pt-6 pb-2 text-left text-[13px] font-medium text-white/30">← Back</button>
+        <CreativeBlock
+          startTime={creativeBlockStartTime}
+          onStart={onStartCreativeBlock}
+          onEnterWorkSessions={() => onViewChange('work-sessions')}
+        />
+      </div>
     )
   }
   if (allComplete || currentView === 'completed') {
