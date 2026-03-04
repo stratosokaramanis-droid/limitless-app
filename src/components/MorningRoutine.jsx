@@ -13,12 +13,42 @@ const cardVariants = {
   visible: (i) => ({ opacity: 1, y: 0, transition: { delay: 0.08 * i } })
 }
 
-const bodyVariants = {
-  collapsed: { height: 0, opacity: 0 },
-  open: { height: 'auto', opacity: 1 }
-}
-
 const isComplete = (status) => status === 'done' || status === 'skipped'
+
+// Phase timeline row — same style as DashboardTab
+function PhaseRow({ label, status, stat, index }) {
+  const dotClass =
+    status === 'done' ? 'bg-white' :
+    status === 'active' ? 'bg-white/30 ring-2 ring-white/20' :
+    'bg-white/[0.06]'
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, x: -12 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: 0.15 + index * 0.06, duration: 0.35 }}
+      className="flex items-center gap-4"
+    >
+      <div className="flex w-6 justify-center">
+        <div className={`relative h-3 w-3 rounded-full ${dotClass}`}>
+          {status === 'active' && (
+            <div className="absolute inset-0 animate-ping rounded-full bg-white/20" />
+          )}
+        </div>
+      </div>
+      <span className={`flex-1 text-[15px] font-medium ${
+        status === 'done' ? 'text-white/50' :
+        status === 'active' ? 'text-white' :
+        'text-white/20'
+      }`}>
+        {label}
+      </span>
+      {stat && (
+        <span className="text-[13px] font-medium tabular-nums text-white/25">{stat}</span>
+      )}
+    </motion.div>
+  )
+}
 
 export default function MorningRoutine({
   items,
@@ -31,17 +61,18 @@ export default function MorningRoutine({
   onNewDay,
   dayActive
 }) {
-  const [mode, setMode] = useState(() => localStorage.getItem(MODE_KEY) || 'free')
-  const [expanded, setExpanded] = useState(() =>
-    Object.fromEntries(items.map((item, i) => [item.id, i === 0]))
-  )
+  const [mode, setMode] = useState(() => localStorage.getItem(MODE_KEY) || 'flow')
+  const [activeCategory, setActiveCategory] = useState(null)
+  const [flowActive, setFlowActive] = useState(false) // whether user tapped Continue in flow mode
   const [morningCheckinDone, setMorningCheckinDone] = useState(false)
   const [creativeCheckinDone, setCreativeCheckinDone] = useState(false)
   const [faithCardHidden, setFaithCardHidden] = useState(false)
-  const [activeCategory, setActiveCategory] = useState(null)
 
   useEffect(() => {
     localStorage.setItem(MODE_KEY, mode)
+    // Reset states when switching modes
+    setActiveCategory(null)
+    setFlowActive(false)
   }, [mode])
 
   useEffect(() => {
@@ -56,41 +87,14 @@ export default function MorningRoutine({
       .catch(() => {})
   }, [])
 
-  useEffect(() => {
-    if (mode === 'flow') {
-      setExpanded(Object.fromEntries(items.map((item) => [item.id, true])))
-    }
-  }, [mode, items])
-
   const flatItems = useMemo(() => items.flatMap((category) => category.items), [items])
-  const nextIndex = flatItems.findIndex((item) => !isComplete(statuses[item.id]))
-  const allComplete = nextIndex === -1
+  const allComplete = flatItems.every(item => isComplete(statuses[item.id]))
+  const doneCount = flatItems.filter(item => statuses[item.id] === 'done').length
+  const skippedCount = flatItems.filter(item => statuses[item.id] === 'skipped').length
 
-  const doneCount = flatItems.filter((item) => statuses[item.id] === 'done').length
-  const skippedCount = flatItems.filter((item) => statuses[item.id] === 'skipped').length
-
-  const flowIndex = items.findIndex((category) =>
-    category.items.some((item) => !isComplete(statuses[item.id]))
-  )
-  const flowCategory = flowIndex === -1 ? null : items[flowIndex]
-
-  const toggleItem = (id) => {
-    const current = statuses[id]
-    if (current === 'done') {
-      onStatusChange(id, null)
-    } else {
-      onStatusChange(id, 'done')
-    }
-  }
-
-  if (currentView === 'night-routine') {
-    return <NightRoutine onNewDay={onNewDay} />
-  }
-
-  if (currentView === 'work-sessions') {
-    return <WorkSessions onEnterNightMode={() => onViewChange('night-routine')} />
-  }
-
+  // Special views
+  if (currentView === 'night-routine') return <NightRoutine onNewDay={onNewDay} />
+  if (currentView === 'work-sessions') return <WorkSessions onEnterNightMode={() => onViewChange('night-routine')} />
   if (currentView === 'creative-block') {
     return (
       <CreativeBlock
@@ -100,7 +104,6 @@ export default function MorningRoutine({
       />
     )
   }
-
   if (allComplete || currentView === 'completed') {
     return (
       <CompletionScreen
@@ -111,105 +114,32 @@ export default function MorningRoutine({
     )
   }
 
-  const visibleCategories = mode === 'flow' ? (flowCategory ? [flowCategory] : []) : items
-
-  // Full-screen HabitCard view for active category (Free mode)
-  if (activeCategory && mode === 'free') {
-    const category = items.find(c => c.id === activeCategory)
-    if (!category) { setActiveCategory(null) }
-    else {
-      const categoryItems = category.items.filter(item => !isComplete(statuses[item.id]))
-      if (categoryItems.length === 0) {
-        setActiveCategory(null)
-      } else {
-        const currentItem = categoryItems[0]
-        const allCategoryItems = category.items
-        const currentIndex = allCategoryItems.findIndex(i => i.id === currentItem.id)
-        return (
-          <div className="flex-1 flex flex-col">
-            <button
-              type="button"
-              onClick={() => setActiveCategory(null)}
-              className="px-6 pt-6 pb-2 text-left text-[13px] font-medium text-white/30"
-            >
-              ← Back to {category.emoji} {category.title}
-            </button>
-            <HabitCard
-              item={currentItem}
-              index={currentIndex}
-              total={allCategoryItems.length}
-              onDone={() => onStatusChange(currentItem.id, 'done')}
-              onSkip={() => onStatusChange(currentItem.id, 'skipped')}
-            />
-          </div>
-        )
-      }
-    }
-  }
-
-  // Flow mode — original linear sequence with phase timeline
+  // ─── FLOW MODE ───────────────────────────────────────────────────────────────
   if (mode === 'flow') {
     const nextItem = flatItems.find(item => !isComplete(statuses[item.id]))
-    if (nextItem) {
-      const currentIndex = flatItems.indexOf(nextItem)
-      // Figure out which category the current item belongs to
-      const currentCategoryIndex = items.findIndex(cat => cat.items.some(i => i.id === nextItem.id))
+    const currentIndex = nextItem ? flatItems.indexOf(nextItem) : 0
+    const currentCategoryIndex = nextItem
+      ? items.findIndex(cat => cat.items.some(i => i.id === nextItem.id))
+      : -1
 
+    // Phase stats for the timeline
+    function getCatStatus(i) {
+      const cat = items[i]
+      const done = cat.items.every(item => isComplete(statuses[item.id]))
+      if (done) return 'done'
+      if (i === currentCategoryIndex) return 'active'
+      return 'upcoming'
+    }
+    function getCatStat(i) {
+      const cat = items[i]
+      const done = cat.items.filter(item => isComplete(statuses[item.id])).length
+      return `${done}/${cat.items.length}`
+    }
+
+    // FLOW ACTIVE — full screen card, nothing else
+    if (flowActive && nextItem) {
       return (
         <div className="flex-1 flex flex-col">
-          <div className="flex items-center justify-between px-6 pt-6 pb-4">
-            <p className="text-[12px] font-semibold uppercase tracking-[0.3em] text-white/30">Flow mode</p>
-            <button
-              type="button"
-              onClick={() => setMode('free')}
-              className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-white/60"
-            >
-              Free
-            </button>
-          </div>
-
-          {/* Phase timeline */}
-          <div className="px-6 pb-4 space-y-3">
-            {items.map((category, i) => {
-              const catDone = category.items.every(item => isComplete(statuses[item.id]))
-              const catActive = i === currentCategoryIndex
-              const catUpcoming = i > currentCategoryIndex
-              const catItemsDone = category.items.filter(item => isComplete(statuses[item.id])).length
-
-              const dotClass = catDone
-                ? 'bg-white'
-                : catActive
-                ? 'bg-white/30 ring-2 ring-white/20'
-                : 'bg-white/[0.06]'
-
-              return (
-                <motion.div
-                  key={category.id}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: 0.05 * i }}
-                  className="flex items-center gap-4"
-                >
-                  <div className="flex w-6 justify-center">
-                    <div className={`relative h-3 w-3 rounded-full ${dotClass}`}>
-                      {catActive && (
-                        <div className="absolute inset-0 animate-ping rounded-full bg-white/20" />
-                      )}
-                    </div>
-                  </div>
-                  <span className={`flex-1 text-[14px] font-medium ${
-                    catDone ? 'text-white/50' : catActive ? 'text-white' : 'text-white/20'
-                  }`}>
-                    {category.emoji} {category.title}
-                  </span>
-                  <span className="text-[12px] font-medium tabular-nums text-white/25">
-                    {catItemsDone}/{category.items.length}
-                  </span>
-                </motion.div>
-              )
-            })}
-          </div>
-
           <HabitCard
             item={nextItem}
             index={currentIndex}
@@ -220,10 +150,97 @@ export default function MorningRoutine({
         </div>
       )
     }
+
+    // FLOW HOME — phase timeline + Continue button (exactly like the home screen)
+    return (
+      <div className="flex flex-1 flex-col px-6 py-8">
+        {/* Header with mode toggle */}
+        <div className="flex items-center justify-between">
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="text-[13px] font-medium text-white/25"
+          >
+            Morning Block
+          </motion.p>
+          <button
+            type="button"
+            onClick={() => setMode('free')}
+            className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.2em] text-white/50"
+          >
+            Free
+          </button>
+        </div>
+
+        <div className="flex flex-1 flex-col justify-center gap-8">
+          {/* Timeline */}
+          <div className="space-y-5">
+            {items.map((category, i) => (
+              <PhaseRow
+                key={category.id}
+                label={`${category.emoji} ${category.title}`}
+                status={getCatStatus(i)}
+                stat={getCatStat(i)}
+                index={i}
+              />
+            ))}
+          </div>
+
+          {/* Continue button */}
+          <motion.button
+            whileTap={{ scale: 0.97 }}
+            onClick={() => setFlowActive(true)}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
+            className="w-full rounded-2xl bg-white/[0.08] px-5 py-[18px] text-[15px] font-semibold text-white"
+          >
+            Continue
+          </motion.button>
+        </div>
+      </div>
+    )
+  }
+
+  // ─── FREE MODE ────────────────────────────────────────────────────────────────
+
+  // Full-screen HabitCard for active category
+  if (activeCategory) {
+    const category = items.find(c => c.id === activeCategory)
+    if (category) {
+      const pending = category.items.filter(item => !isComplete(statuses[item.id]))
+      if (pending.length > 0) {
+        const currentItem = pending[0]
+        const allCategoryItems = category.items
+        const currentIndex = allCategoryItems.findIndex(i => i.id === currentItem.id)
+        return (
+          <div className="flex-1 flex flex-col">
+            <button
+              type="button"
+              onClick={() => setActiveCategory(null)}
+              className="px-6 pt-6 pb-2 text-left text-[13px] font-medium text-white/30"
+            >
+              ← {category.emoji} {category.title}
+            </button>
+            <HabitCard
+              item={currentItem}
+              index={currentIndex}
+              total={allCategoryItems.length}
+              onDone={() => onStatusChange(currentItem.id, 'done')}
+              onSkip={() => onStatusChange(currentItem.id, 'skipped')}
+            />
+          </div>
+        )
+      } else {
+        // All done in this category, go back
+        setActiveCategory(null)
+      }
+    }
   }
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto px-6 pb-8 pt-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <p className="text-[12px] font-semibold uppercase tracking-[0.3em] text-white/30">Morning block</p>
@@ -231,42 +248,23 @@ export default function MorningRoutine({
         </div>
         <button
           type="button"
-          onClick={() => setMode(mode === 'free' ? 'flow' : 'free')}
+          onClick={() => setMode('flow')}
           className="flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.2em] text-white/60"
         >
-          <span className="h-2 w-2 rounded-full bg-white/40" />
-          {mode === 'free' ? 'Flow' : 'Free'}
+          Flow
         </button>
       </div>
 
+      {/* Faith cards */}
       {dayActive && (
         <div className="mt-6 space-y-2">
-          {/* Morning check-in status */}
           {morningCheckinDone ? (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3"
-            >
+            <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
               <div className="h-2 w-2 rounded-full bg-emerald-400" />
               <p className="flex-1 text-[13px] font-medium text-white/50">Morning check-in done</p>
-              {!creativeCheckinDone && (
-                <a
-                  href="https://t.me/FaithLimitlessBot"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[11px] font-semibold uppercase tracking-[0.15em] text-white/30"
-                >
-                  Reopen
-                </a>
-              )}
-            </motion.div>
+            </div>
           ) : !faithCardHidden ? (
-            <motion.div
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="rounded-2xl border border-white/10 bg-white/5"
-            >
+            <div className="rounded-2xl border border-white/10 bg-white/5">
               <a
                 href="https://t.me/FaithLimitlessBot"
                 target="_blank"
@@ -286,35 +284,28 @@ export default function MorningRoutine({
               >
                 Hide
               </button>
-            </motion.div>
+            </div>
           ) : (
             <button
               type="button"
               onClick={() => setFaithCardHidden(false)}
-              className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-[11px] text-white/20"
+              className="flex items-center gap-2 py-2 text-[11px] text-white/20"
             >
-              <span>🕊️</span> Show Faith check-in
+              🕊️ Show Faith check-in
             </button>
           )}
 
-          {/* Pre-creative check-in status */}
           {morningCheckinDone && (
             creativeCheckinDone ? (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3"
-              >
+              <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
                 <div className="h-2 w-2 rounded-full bg-emerald-400" />
-                <p className="flex-1 text-[13px] font-medium text-white/50">Pre-creative check-in done</p>
-              </motion.div>
+                <p className="text-[13px] font-medium text-white/50">Pre-creative check-in done</p>
+              </div>
             ) : (
-              <motion.a
+              <a
                 href="https://t.me/FaithLimitlessBot"
                 target="_blank"
                 rel="noreferrer"
-                initial={{ opacity: 0, y: 4 }}
-                animate={{ opacity: 1, y: 0 }}
                 className="flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3"
               >
                 <div>
@@ -322,107 +313,58 @@ export default function MorningRoutine({
                   <p className="mt-1 text-[11px] text-white/40">Talk to Faith before you create</p>
                 </div>
                 <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/50">Open</span>
-              </motion.a>
+              </a>
             )
           )}
         </div>
       )}
 
-      {mode === 'flow' && (
-        <div className="mt-6 flex items-center justify-between rounded-2xl border border-white/10 bg-white/5 px-4 py-3">
-          <p className="text-[12px] font-semibold uppercase tracking-[0.2em] text-white/40">Flow mode</p>
-          <p className="text-[12px] font-semibold text-white/60">
-            {flowIndex === -1 ? items.length : flowIndex + 1}/{items.length}
-          </p>
-        </div>
-      )}
-
+      {/* Category cards */}
       <div className="mt-6 space-y-4">
-        {visibleCategories.map((category, index) => {
+        {items.map((category, index) => {
           const total = category.items.length
-          const completed = category.items.filter((item) => isComplete(statuses[item.id])).length
-          const isExpanded = mode === 'flow' ? true : expanded[category.id]
+          const completed = category.items.filter(item => isComplete(statuses[item.id])).length
+          const allDone = completed === total
 
           return (
-            <motion.div
+            <motion.button
               key={category.id}
+              type="button"
               custom={index}
               initial="hidden"
               animate="visible"
               variants={cardVariants}
-              className="rounded-3xl border border-white/10 bg-white/[0.04]"
+              whileTap={{ scale: 0.98 }}
+              onClick={() => !allDone && setActiveCategory(category.id)}
+              className="w-full rounded-3xl border border-white/10 bg-white/[0.04] px-5 py-4 text-left"
             >
-              <button
-                type="button"
-                onClick={() => {
-                  // If all items in this category are complete, just toggle expand
-                  const hasIncomplete = category.items.some(item => !isComplete(statuses[item.id]))
-                  if (hasIncomplete) {
-                    setActiveCategory(category.id)
-                    return
-                  }
-                  if (mode === 'flow') return
-                  setExpanded((prev) => ({ ...prev, [category.id]: !prev[category.id] }))
-                }}
-                className="flex w-full items-center justify-between gap-4 px-5 py-4"
-              >
+              <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <span className="text-[20px]" aria-hidden>
-                    {category.emoji}
-                  </span>
-                  <div className="text-left">
-                    <p className="text-[15px] font-semibold text-white">{category.title}</p>
+                  <span className="text-[20px]">{category.emoji}</span>
+                  <div>
+                    <p className={`text-[15px] font-semibold ${allDone ? 'text-white/40' : 'text-white'}`}>
+                      {category.title}
+                    </p>
                     <p className="text-[11px] uppercase tracking-[0.2em] text-white/35">
-                      {completed}/{total} complete
+                      {completed}/{total} done
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                {allDone ? (
+                  <div className="h-2 w-2 rounded-full bg-white/40" />
+                ) : (
                   <div className="h-2 w-2 rounded-full bg-white/20" />
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-white/40">
-                    {isExpanded ? 'Hide' : 'Open'}
-                  </span>
-                </div>
-              </button>
-
-              <AnimatePresence initial={false}>
-                {isExpanded && (
-                  <motion.div
-                    key="body"
-                    variants={bodyVariants}
-                    initial="collapsed"
-                    animate="open"
-                    exit="collapsed"
-                    transition={{ duration: 0.25 }}
-                    className="overflow-hidden"
-                  >
-                    <div className="space-y-2 px-5 pb-5">
-                      {category.items.map((item) => {
-                        const done = statuses[item.id] === 'done'
-                        return (
-                          <button
-                            key={item.id}
-                            type="button"
-                            onClick={() => toggleItem(item.id)}
-                            className="flex w-full items-start gap-3 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-left"
-                          >
-                            <div className={`mt-1 h-4 w-4 rounded-full border ${done ? 'border-white bg-white' : 'border-white/30'}`}>
-                              {done && <div className="h-full w-full rounded-full bg-black" />}
-                            </div>
-                            <div className="flex-1">
-                              <p className={`text-[14px] font-semibold ${done ? 'text-white/70 line-through' : 'text-white'}`}>
-                                {item.title}
-                              </p>
-                              <p className="mt-1 text-[12px] text-white/40">{item.description}</p>
-                            </div>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  </motion.div>
                 )}
-              </AnimatePresence>
-            </motion.div>
+              </div>
+
+              {/* Mini progress bar */}
+              <div className="mt-3 h-0.5 w-full rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full bg-white/30 transition-all duration-500"
+                  style={{ width: `${(completed / total) * 100}%` }}
+                />
+              </div>
+            </motion.button>
           )
         })}
       </div>
