@@ -369,26 +369,18 @@ export default function DashboardTab({ onNavigateToFocus, dayActive, onStartDay 
               </motion.a>
             )}
 
-            {/* Morning progress */}
-            <motion.div
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 }}
-              className="w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4"
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-[14px] font-semibold text-white">Morning Block</p>
-                <p className="text-[13px] font-medium tabular-nums text-white/30">{morningDone}/{morningTotal}</p>
-              </div>
-              <div className="mt-3 h-1 w-full rounded-full bg-white/10">
-                <motion.div
-                  className="h-full rounded-full bg-white/40"
-                  initial={{ width: 0 }}
-                  animate={{ width: morningTotal > 0 ? `${(morningDone / morningTotal) * 100}%` : '0%' }}
-                  transition={{ duration: 0.6, ease: 'easeOut' }}
+            {/* Phase timeline */}
+            <div className="w-full space-y-5">
+              {PHASES.map((phase, i) => (
+                <PhaseRow
+                  key={phase.key}
+                  label={phase.label}
+                  status={getPhaseStatus(phase.key)}
+                  stat={getPhaseStat(phase.key)}
+                  index={i}
                 />
-              </div>
-            </motion.div>
+              ))}
+            </div>
 
             {/* Continue button */}
             <motion.button

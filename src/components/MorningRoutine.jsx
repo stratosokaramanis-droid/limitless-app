@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import HabitCard from './HabitCard.jsx'
 import CompletionScreen from './CompletionScreen.jsx'
 import CreativeBlock from './CreativeBlock.jsx'
 import WorkSessions from './WorkSessions.jsx'
@@ -37,6 +38,7 @@ export default function MorningRoutine({
   const [morningCheckinDone, setMorningCheckinDone] = useState(false)
   const [creativeCheckinDone, setCreativeCheckinDone] = useState(false)
   const [faithCardHidden, setFaithCardHidden] = useState(false)
+  const [activeCategory, setActiveCategory] = useState(null)
 
   useEffect(() => {
     localStorage.setItem(MODE_KEY, mode)
@@ -110,6 +112,40 @@ export default function MorningRoutine({
   }
 
   const visibleCategories = mode === 'flow' ? (flowCategory ? [flowCategory] : []) : items
+
+  // Full-screen HabitCard view for active category
+  if (activeCategory) {
+    const category = items.find(c => c.id === activeCategory)
+    if (!category) { setActiveCategory(null) }
+    else {
+      const categoryItems = category.items.filter(item => !isComplete(statuses[item.id]))
+      if (categoryItems.length === 0) {
+        setActiveCategory(null)
+      } else {
+        const currentItem = categoryItems[0]
+        const allCategoryItems = category.items
+        const currentIndex = allCategoryItems.findIndex(i => i.id === currentItem.id)
+        return (
+          <div className="flex-1 flex flex-col">
+            <button
+              type="button"
+              onClick={() => setActiveCategory(null)}
+              className="px-6 pt-6 pb-2 text-left text-[13px] font-medium text-white/30"
+            >
+              ← Back to {category.emoji} {category.title}
+            </button>
+            <HabitCard
+              item={currentItem}
+              index={currentIndex}
+              total={allCategoryItems.length}
+              onDone={() => onStatusChange(currentItem.id, 'done')}
+              onSkip={() => onStatusChange(currentItem.id, 'skipped')}
+            />
+          </div>
+        )
+      }
+    }
+  }
 
   return (
     <div className="flex-1 flex flex-col overflow-y-auto px-6 pb-8 pt-6">
@@ -244,6 +280,12 @@ export default function MorningRoutine({
               <button
                 type="button"
                 onClick={() => {
+                  // If all items in this category are complete, just toggle expand
+                  const hasIncomplete = category.items.some(item => !isComplete(statuses[item.id]))
+                  if (hasIncomplete) {
+                    setActiveCategory(category.id)
+                    return
+                  }
                   if (mode === 'flow') return
                   setExpanded((prev) => ({ ...prev, [category.id]: !prev[category.id] }))
                 }}
