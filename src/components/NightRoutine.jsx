@@ -85,7 +85,7 @@ function HoldButton({ onComplete, label }) {
   )
 }
 
-export default function NightRoutine({ onNewDay }) {
+export default function NightRoutine({ onNewDay, onViewChange }) {
   const [statuses, setStatuses] = useState(() => {
     try {
       const raw = localStorage.getItem(LS_KEY)

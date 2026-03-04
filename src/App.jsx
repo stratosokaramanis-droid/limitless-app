@@ -214,6 +214,11 @@ export default function App() {
 
   const handleEndDay = () => {
     dayEndedManually.current = true
+    const today = new Date().toISOString().slice(0, 10)
+    const vfCompletedDate = localStorage.getItem('limitless_vf_completed_date')
+    if (vfCompletedDate !== today) {
+      localStorage.setItem('limitless_vf_skipped', today)
+    }
     setDayStartTimestamp(null)
     localStorage.removeItem(STORAGE_KEYS.dayStart)
     localStorage.removeItem(STORAGE_KEYS.statuses)

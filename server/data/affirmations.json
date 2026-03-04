@@ -1,0 +1,72 @@
+{
+  "affirmations": [
+    {
+      "index": 0,
+      "text": "I'm certain that I will be financially free and abundant the next month.",
+      "category": "abundance"
+    },
+    {
+      "index": 1,
+      "text": "I am certain that Caldera will bring at least 10k per month.",
+      "category": "abundance"
+    },
+    {
+      "index": 2,
+      "text": "I love the creation and building process, and I'm so lucky to have all these tools for my creativity and imagination.",
+      "category": "creative-expression"
+    },
+    {
+      "index": 3,
+      "text": "HyperSpace is live and is launching very soon. It will be one of the best moments of my life and create a new path for me.",
+      "category": "vision"
+    },
+    {
+      "index": 4,
+      "text": "I see myself in my own place a few months from now.",
+      "category": "vision"
+    },
+    {
+      "index": 5,
+      "text": "I trust the Universe to guide me and I understand that everything is part of the journey.",
+      "category": "trust"
+    },
+    {
+      "index": 6,
+      "text": "I really am in the pursuit of greatness, I enjoy growing and progressing and getting better so much and I really see myself becoming one of the greats and I'm not afraid to say it.",
+      "category": "identity"
+    },
+    {
+      "index": 7,
+      "text": "I trust that following this incredible system that the universe has been creating in the background for me will truly make me limitless and give my life a whole new gameplay experience. It will make me special and that will give me an advantage in all of my work and my social interactions.",
+      "category": "trust"
+    },
+    {
+      "index": 8,
+      "text": "Creation and art feels as a form of self expression that just comes out of me.",
+      "category": "creative-expression"
+    },
+    {
+      "index": 9,
+      "text": "My hard work will reap incredible benefits, both socially and financially. I will see abundance in both of these aspects.",
+      "category": "abundance"
+    },
+    {
+      "index": 10,
+      "text": "Right now, at this moment, I'm closer to my desired reality and higher self than I've ever been. Each moment is a step on an unexplored path that ultimately leads to my dream destination.",
+      "category": "presence"
+    },
+    {
+      "index": 11,
+      "text": "Everyday, I'm becoming more and more limitless.",
+      "category": "identity"
+    }
+  ],
+  "categories": {
+    "abundance": { "label": "Abundance", "emoji": "💰" },
+    "creative-expression": { "label": "Creative Expression", "emoji": "🎨" },
+    "vision": { "label": "Vision", "emoji": "🔭" },
+    "trust": { "label": "Trust", "emoji": "🕊️" },
+    "identity": { "label": "Identity", "emoji": "🔥" },
+    "presence": { "label": "Presence", "emoji": "🧘" }
+  }
+}

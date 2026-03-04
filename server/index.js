@@ -16,6 +16,7 @@ const HISTORY_DIR = path.join(DATA_DIR, 'history')
 
 const BADGES_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/badges.json'), 'utf8'))
 const MISSIONS_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/missions.json'), 'utf8'))
+const AFFIRMATIONS_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/affirmations.json'), 'utf8'))
 
 app.use(cors())
 app.use(express.json())
@@ -113,23 +114,14 @@ const DAILY_STUBS_EXTRA = {
     missionsAttempted: [],
     xpGained: {}
   },
+  'key-decisions': {
+    date: null,
+    decisions: [],
+    totalMultipliedWeight: 0
+  },
   'vf-game': {
     date: null,
-    triggeredAt: null,
-    completedAt: null,
-    presenceScore: null,
-    effortLevel: null,
-    affirmations: BADGES_DATA.badges.map((b) => ({
-      badgeSlug: b.slug,
-      statement: b.identityStatement,
-      convictionScore: null,
-      reinforcingActions: [],
-      weakeningActions: [],
-      votes: []
-    })),
-    beliefs: [],
-    guidedQuestions: [],
-    notes: ''
+    sessions: []
   }
 }
 
@@ -782,100 +774,157 @@ app.post('/badge-missions/complete', (req, res) => {
   })
 })
 
+// ─── GET /affirmations (static reference) ─────────────────────────────────────
+
+app.get('/affirmations', (req, res) => res.json(AFFIRMATIONS_DATA))
+
+// ─── POST /key-decisions ──────────────────────────────────────────────────────
+
+const KEY_DECISION_TYPES = new Set(['resist', 'persist', 'reframe', 'ground', 'face-boss', 'recenter'])
+
+app.post('/key-decisions', (req, res) => {
+  const { description, type, multiplier, affirmationIndex, notes } = req.body
+  if (!description || !type) return res.status(400).json({ error: 'description and type required' })
+  if (!KEY_DECISION_TYPES.has(type)) return res.status(400).json({ error: `type must be one of: ${[...KEY_DECISION_TYPES].join(', ')}` })
+
+  const today = todayStr()
+  let data = resetForNewDay('key-decisions', today)
+  data.date = today
+
+  const mult = multiplier || (type === 'face-boss' ? 5 : type === 'resist' ? 3 : 2)
+
+  const decision = {
+    id: randomUUID(),
+    timestamp: nowIso(),
+    description,
+    type,
+    multiplier: mult,
+    affirmationIndex: affirmationIndex ?? null,
+    notes: notes || ''
+  }
+
+  data.decisions.push(decision)
+  data.totalMultipliedWeight += mult
+
+  // Generate multiplied vote
+  const votesToAppend = [{
+    action: description,
+    category: 'mental-power',
+    polarity: 'positive',
+    source: 'key-decision',
+    weight: mult
+  }]
+
+  let votesData = resetForNewDay('votes', today)
+  votesData.date = today
+  for (const v of votesToAppend) {
+    votesData.votes.push({
+      id: randomUUID(),
+      timestamp: nowIso(),
+      action: v.action,
+      category: v.category,
+      polarity: v.polarity,
+      source: v.source,
+      weight: v.weight
+    })
+  }
+  writeJson('votes', votesData)
+
+  writeJson('key-decisions', data)
+  res.json({
+    ok: true,
+    decision,
+    totalDecisions: data.decisions.length,
+    totalMultipliedWeight: data.totalMultipliedWeight
+  })
+})
+
 // ─── POST /vf-game ────────────────────────────────────────────────────────────
 
-const VF_GAME_FIELDS = ['presenceScore', 'effortLevel', 'affirmations', 'beliefs', 'guidedQuestions', 'notes']
+const VF_GAME_FIELDS = ['presenceScore', 'affirmations', 'bossEncountered', 'keyDecisionsLinked', 'closing', 'notes']
 
 app.post('/vf-game', (req, res) => {
   const today = todayStr()
   let data = resetForNewDay('vf-game', today)
   data.date = today
-  if (!data.triggeredAt) data.triggeredAt = nowIso()
 
   const allowed = pick(req.body, VF_GAME_FIELDS)
 
-  // Process affirmations and generate votes + XP
+  // Build session entry
+  const session = {
+    id: randomUUID(),
+    timestamp: nowIso(),
+    presenceScore: allowed.presenceScore ?? null,
+    bossEncountered: allowed.bossEncountered ?? null,
+    keyDecisionsLinked: allowed.keyDecisionsLinked || [],
+    closing: allowed.closing || '',
+    notes: allowed.notes || '',
+    affirmations: []
+  }
+
+  // Process affirmations
   if (allowed.affirmations && Array.isArray(allowed.affirmations)) {
-    const progress = readPersistent('badge-progress')
-    const rules = BADGES_DATA.xpRules
     const votesToAppend = []
 
     for (const aff of allowed.affirmations) {
-      if (!aff.badgeSlug) continue
+      if (aff.index === undefined) continue
 
-      // Find existing affirmation slot
-      const slot = data.affirmations.find((a) => a.badgeSlug === aff.badgeSlug)
-      if (slot) {
-        if (aff.convictionScore !== undefined) slot.convictionScore = aff.convictionScore
-        if (aff.reinforcingActions) slot.reinforcingActions = aff.reinforcingActions
-        if (aff.weakeningActions) slot.weakeningActions = aff.weakeningActions
-      }
+      session.affirmations.push({
+        index: aff.index,
+        convictionScore: aff.convictionScore ?? null,
+        resistanceScore: aff.resistanceScore ?? null,
+        exploration: aff.exploration || '',
+        resistance: aff.resistance || ''
+      })
 
-      // Apply XP based on conviction score
+      // Generate conviction votes
       if (aff.convictionScore !== undefined) {
-        updateStreak(progress, aff.badgeSlug, today)
-        if (aff.convictionScore >= rules.vfBonusThreshold) {
-          applyXp(progress, aff.badgeSlug, rules.vfBonusXp)
-        } else if (aff.convictionScore <= rules.vfPenaltyThreshold) {
-          applyXp(progress, aff.badgeSlug, rules.vfPenaltyXp)
-        }
-      }
+        const affDef = AFFIRMATIONS_DATA.affirmations.find((a) => a.index === aff.index)
 
-      // Generate votes from reinforcing/weakening actions
-      if (aff.reinforcingActions) {
-        for (const action of aff.reinforcingActions) {
+        if (aff.convictionScore >= 8) {
           votesToAppend.push({
-            action: action,
-            category: BADGES_DATA.badges.find((b) => b.slug === aff.badgeSlug)?.voteCategory || 'personality',
+            action: `High conviction: ${affDef?.text?.slice(0, 60) || 'affirmation ' + aff.index}`,
+            category: 'mental-power',
             polarity: 'positive',
             source: 'vf-game',
-            weight: 1
+            weight: 2
           })
-          if (slot) slot.votes.push({ action, polarity: 'positive', weight: 1 })
-        }
-      }
-      if (aff.weakeningActions) {
-        for (const action of aff.weakeningActions) {
+        } else if (aff.convictionScore <= 3) {
           votesToAppend.push({
-            action: action,
-            category: BADGES_DATA.badges.find((b) => b.slug === aff.badgeSlug)?.voteCategory || 'personality',
+            action: `Low conviction: ${affDef?.text?.slice(0, 60) || 'affirmation ' + aff.index}`,
+            category: 'mental-power',
             polarity: 'negative',
             source: 'vf-game',
             weight: 1
           })
-          if (slot) slot.votes.push({ action, polarity: 'negative', weight: 1 })
         }
       }
-      // No action on either → -0.5 vote
-      if ((!aff.reinforcingActions || aff.reinforcingActions.length === 0) &&
-          (!aff.weakeningActions || aff.weakeningActions.length === 0) &&
-          aff.convictionScore !== undefined) {
+
+      // Generate resistance votes
+      if (aff.resistanceScore !== undefined && aff.resistanceScore >= 8) {
+        const affDef = AFFIRMATIONS_DATA.affirmations.find((a) => a.index === aff.index)
         votesToAppend.push({
-          action: `No action taken for: ${BADGES_DATA.badges.find((b) => b.slug === aff.badgeSlug)?.name || aff.badgeSlug}`,
-          category: BADGES_DATA.badges.find((b) => b.slug === aff.badgeSlug)?.voteCategory || 'personality',
+          action: `High resistance: ${affDef?.text?.slice(0, 60) || 'affirmation ' + aff.index}`,
+          category: 'mental-power',
           polarity: 'negative',
           source: 'vf-game',
-          weight: 0.5
+          weight: 1
         })
-        if (slot) slot.votes.push({ action: 'No action taken', polarity: 'negative', weight: 0.5 })
       }
     }
 
-    writePersistent('badge-progress', progress)
-
-    // Append VF Game votes to daily votes.json
+    // Append votes
     if (votesToAppend.length > 0) {
       let votesData = resetForNewDay('votes', today)
       votesData.date = today
       for (const v of votesToAppend) {
-        if (!VALID_CATEGORIES.has(v.category)) continue
         votesData.votes.push({
           id: randomUUID(),
           timestamp: nowIso(),
           action: v.action,
           category: v.category,
           polarity: v.polarity,
-          source: 'vf-game',
+          source: v.source,
           weight: v.weight
         })
       }
@@ -883,56 +932,205 @@ app.post('/vf-game', (req, res) => {
     }
   }
 
-  // Apply non-affirmation fields
-  if (allowed.presenceScore !== undefined) data.presenceScore = allowed.presenceScore
-  if (allowed.effortLevel !== undefined) data.effortLevel = allowed.effortLevel
-  if (allowed.beliefs) data.beliefs = allowed.beliefs
-  if (allowed.guidedQuestions) data.guidedQuestions = allowed.guidedQuestions
-  if (allowed.notes !== undefined) data.notes = allowed.notes
-  data.completedAt = nowIso()
+  // Append session (multiple per day)
+  data.sessions.push(session)
 
   writeJson('vf-game', data)
-  res.json({ ok: true })
+  res.json({ ok: true, sessionId: session.id, sessionCount: data.sessions.length })
+})
+
+// ─── GET /vf-score ────────────────────────────────────────────────────────────
+
+app.get('/vf-score', (req, res) => {
+  const today = todayStr()
+  const vfData = readJson('vf-game')
+  const kdData = readJson('key-decisions')
+
+  // No sessions today
+  if (!vfData.sessions || vfData.sessions.length === 0) {
+    return res.json({
+      date: today,
+      score: null,
+      components: null,
+      message: 'No VF sessions today'
+    })
+  }
+
+  // Use the LATEST session for scoring
+  const latest = vfData.sessions[vfData.sessions.length - 1]
+  const affs = latest.affirmations || []
+
+  // 1. Conviction average (0-10)
+  const convScores = affs.filter(a => a.convictionScore !== null).map(a => a.convictionScore)
+  const convAvg = convScores.length > 0 ? convScores.reduce((s, v) => s + v, 0) / convScores.length : 0
+
+  // 2. Resistance average INVERTED (0-10, lower resistance = higher score)
+  const resScores = affs.filter(a => a.resistanceScore !== null).map(a => a.resistanceScore)
+  const resAvg = resScores.length > 0 ? resScores.reduce((s, v) => s + v, 0) / resScores.length : 0
+  const resInverted = 10 - resAvg
+
+  // 3. Key decisions contribution (capped at 10)
+  const kdWeight = kdData.totalMultipliedWeight || 0
+  const kdScore = Math.min(10, kdWeight / 3) // 30 total weight = max 10
+
+  // 4. Boss encounters faced today
+  let bossScore = 0
+  try {
+    const raw = fs.readFileSync(path.join(DATA_DIR, 'boss-encounters.jsonl'), 'utf8')
+    const entries = raw.split('\n').filter(Boolean)
+      .map(l => { try { return JSON.parse(l) } catch { return null } })
+      .filter(e => e && e.timestamp && e.timestamp.startsWith(today) && e.faced)
+    bossScore = Math.min(10, entries.length * 3.33) // 3 faced bosses = max 10
+  } catch {}
+
+  // 5. Presence score from latest session (0-10)
+  const presence = latest.presenceScore ?? 0
+
+  // Composed score: weighted average
+  // Conviction 25%, Resistance(inv) 25%, Key Decisions 20%, Boss 15%, Presence 15%
+  const composed = (
+    convAvg * 0.25 +
+    resInverted * 0.25 +
+    kdScore * 0.20 +
+    bossScore * 0.15 +
+    presence * 0.15
+  )
+
+  const score = Math.round(composed * 10) / 10
+
+  res.json({
+    date: today,
+    score,
+    components: {
+      conviction: { avg: Math.round(convAvg * 10) / 10, weight: '25%' },
+      resistance: { avg: Math.round(resAvg * 10) / 10, inverted: Math.round(resInverted * 10) / 10, weight: '25%' },
+      keyDecisions: { totalWeight: kdWeight, score: Math.round(kdScore * 10) / 10, weight: '20%' },
+      bossEncounters: { score: Math.round(bossScore * 10) / 10, weight: '15%' },
+      presence: { score: presence, weight: '15%' }
+    },
+    sessionCount: vfData.sessions.length,
+    latestSession: latest.timestamp
+  })
+})
+
+// ─── VF Chapters ──────────────────────────────────────────────────────────────
+
+app.get('/vf-chapters', (req, res) => {
+  try {
+    const raw = fs.readFileSync(path.join(DATA_DIR, 'vf-chapters.jsonl'), 'utf8')
+    const chapters = raw.split('\n').filter(Boolean)
+      .map(l => { try { return JSON.parse(l) } catch { return null } })
+      .filter(Boolean)
+
+    const { limit } = req.query
+    const result = limit ? chapters.slice(-parseInt(limit, 10)) : chapters
+
+    res.json(result)
+  } catch {
+    res.json([])
+  }
+})
+
+app.post('/vf-chapters', (req, res) => {
+  const { title, narrative, vfScore, keyMoments, bossesNamed, affirmationShifts, mood } = req.body
+  if (!narrative) return res.status(400).json({ error: 'narrative required' })
+
+  // Count existing chapters
+  let chapterNumber = 1
+  try {
+    const raw = fs.readFileSync(path.join(DATA_DIR, 'vf-chapters.jsonl'), 'utf8')
+    chapterNumber = raw.split('\n').filter(Boolean).length + 1
+  } catch {}
+
+  const entry = {
+    id: randomUUID(),
+    chapter: chapterNumber,
+    date: todayStr(),
+    timestamp: nowIso(),
+    title: title || `Chapter ${chapterNumber}`,
+    narrative,
+    vfScore: vfScore ?? null,
+    keyMoments: keyMoments || [],
+    bossesNamed: bossesNamed || [],
+    affirmationShifts: affirmationShifts || [],
+    mood: mood || null
+  }
+
+  fs.appendFileSync(path.join(DATA_DIR, 'vf-chapters.jsonl'), JSON.stringify(entry) + '\n', 'utf8')
+
+  res.json({ ok: true, chapter: chapterNumber, id: entry.id })
 })
 
 // ─── POST /boss-encounters ────────────────────────────────────────────────────
 
 app.post('/boss-encounters', (req, res) => {
-  const { badgeSlug, type, title, content } = req.body
-  if (!badgeSlug || !type || !content) return res.status(400).json({ error: 'badgeSlug, type, and content required' })
+  const { badgeSlug, type, title, content, faced, affirmationIndex } = req.body
+  if (!type || !content) return res.status(400).json({ error: 'type and content required' })
   if (!['text', 'image', 'conversation'].includes(type)) return res.status(400).json({ error: 'type must be text, image, or conversation' })
 
-  const badge = BADGES_DATA.badges.find((b) => b.slug === badgeSlug)
-  if (!badge) return res.status(400).json({ error: 'Unknown badge' })
-
   const today = todayStr()
-  const progress = readPersistent('badge-progress')
+  let xpGained = 0
 
-  // Update streak and apply XP
-  updateStreak(progress, badgeSlug, today)
-  const xpGained = applyXp(progress, badgeSlug, BADGES_DATA.xpRules.bossEncounterXp)
-  progress.badges[badgeSlug].bossEncounters += 1
-  writePersistent('badge-progress', progress)
+  // If badgeSlug provided, still do XP (backwards compat)
+  if (badgeSlug) {
+    const badge = BADGES_DATA.badges.find((b) => b.slug === badgeSlug)
+    if (badge) {
+      const progress = readPersistent('badge-progress')
+      updateStreak(progress, badgeSlug, today)
+      xpGained = applyXp(progress, badgeSlug, BADGES_DATA.xpRules.bossEncounterXp)
+      progress.badges[badgeSlug].bossEncounters += 1
+      writePersistent('badge-progress', progress)
+    }
+  }
+
+  // If boss was faced, log as a key decision with 5x multiplier
+  if (faced) {
+    let kdData = resetForNewDay('key-decisions', today)
+    kdData.date = today
+    const decision = {
+      id: randomUUID(),
+      timestamp: nowIso(),
+      description: `Faced boss: ${title || content.slice(0, 60)}`,
+      type: 'face-boss',
+      multiplier: 5,
+      affirmationIndex: affirmationIndex ?? null,
+      notes: content
+    }
+    kdData.decisions.push(decision)
+    kdData.totalMultipliedWeight += 5
+
+    // Generate 5x vote
+    let votesData = resetForNewDay('votes', today)
+    votesData.date = today
+    votesData.votes.push({
+      id: randomUUID(),
+      timestamp: nowIso(),
+      action: decision.description,
+      category: 'mental-power',
+      polarity: 'positive',
+      source: 'key-decision',
+      weight: 5
+    })
+    writeJson('votes', votesData)
+    writeJson('key-decisions', kdData)
+  }
 
   // Append to boss-encounters.jsonl
   const entry = {
     id: randomUUID(),
     timestamp: nowIso(),
-    badgeSlug,
+    badgeSlug: badgeSlug || null,
+    affirmationIndex: affirmationIndex ?? null,
     type,
     title: title || '',
     content,
+    faced: faced || false,
     xpAwarded: xpGained,
     source: req.body.source || 'user'
   }
   fs.appendFileSync(path.join(DATA_DIR, 'boss-encounters.jsonl'), JSON.stringify(entry) + '\n', 'utf8')
 
-  res.json({
-    ok: true, xpGained,
-    totalXp: progress.badges[badgeSlug].xp,
-    tier: progress.badges[badgeSlug].tier,
-    tierName: progress.badges[badgeSlug].tierName
-  })
+  res.json({ ok: true, faced: faced || false, xpAwarded: xpGained })
 })
 
 // ─── GET /boss-encounters ─────────────────────────────────────────────────────

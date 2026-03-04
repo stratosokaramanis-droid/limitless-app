@@ -5,6 +5,7 @@ import CompletionScreen from './CompletionScreen.jsx'
 import CreativeBlock from './CreativeBlock.jsx'
 import WorkSessions from './WorkSessions.jsx'
 import NightRoutine from './NightRoutine.jsx'
+import VFGame from './VFGame.jsx'
 
 const MODE_KEY = 'limitless_morning_mode'
 
@@ -134,7 +135,15 @@ export default function MorningRoutine({
     return (
       <div className="flex flex-1 flex-col">
         <button type="button" onClick={() => onViewChange('morning-routine')} className="px-6 pt-6 pb-2 text-left text-[13px] font-medium text-white/30">← Back</button>
-        <NightRoutine onNewDay={onNewDay} />
+        <NightRoutine onNewDay={onNewDay} onViewChange={onViewChange} />
+      </div>
+    )
+  }
+  if (currentView === 'vf-game') {
+    return (
+      <div className="flex flex-1 flex-col">
+        <button type="button" onClick={() => onViewChange('morning-routine')} className="px-6 pt-6 pb-2 text-left text-[13px] font-medium text-white/30">← Back</button>
+        <VFGame onBack={() => onViewChange('morning-routine')} />
       </div>
     )
   }
@@ -528,6 +537,7 @@ export default function MorningRoutine({
           { key: 'creative-block', emoji: '🎨', label: 'Creative Block', sub: '3h deep creation' },
           { key: 'work-sessions', emoji: '⚡', label: 'Deep Work', sub: '3 × 90 min sessions' },
           { key: 'night-routine', emoji: '🌙', label: 'Night Routine', sub: 'Wind down + planning' },
+          { key: 'vf-game', emoji: '🎮', label: 'VF Game', sub: 'Score your inner landscape' },
         ].map(({ key, emoji, label, sub }) => (
           <motion.button
             key={key}
