@@ -11,6 +11,20 @@ DATA_DIR="$HOME/.openclaw/data/shared"
 OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
 API="http://localhost:3001"
 
+# ─── Backup live data before tests ────────────────────────────────────────────
+BACKUP_DIR=$(mktemp -d)
+echo "Backing up live data to $BACKUP_DIR ..."
+cp "$DATA_DIR"/*.json "$BACKUP_DIR/" 2>/dev/null || true
+cp "$DATA_DIR"/*.jsonl "$BACKUP_DIR/" 2>/dev/null || true
+
+restore_data() {
+  echo "Restoring live data from $BACKUP_DIR ..."
+  cp "$BACKUP_DIR"/*.json "$DATA_DIR/" 2>/dev/null || true
+  cp "$BACKUP_DIR"/*.jsonl "$DATA_DIR/" 2>/dev/null || true
+  rm -rf "$BACKUP_DIR"
+}
+trap restore_data EXIT
+
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
