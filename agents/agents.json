@@ -1,0 +1,90 @@
+{
+  "_comment": "Limitless System — Agent definitions for OpenClaw. Run scripts/setup-agents.sh to install.",
+  "agents": [
+    {
+      "id": "limitless-state",
+      "name": "Pulse",
+      "soulFile": "agents/pulse/SOUL.md",
+      "workspaceDir": "agents/pulse",
+      "model": "openai-codex/gpt-5.2",
+      "telegramAccount": "pulse",
+      "identity": {
+        "name": "Pulse",
+        "theme": "state tracking sensor",
+        "emoji": "📊"
+      }
+    },
+    {
+      "id": "faith",
+      "name": "Faith",
+      "soulFile": "agents/faith/SOUL.md",
+      "workspaceDir": "agents/faith",
+      "model": "anthropic/claude-opus-4-6",
+      "telegramAccount": "faith",
+      "identity": {
+        "name": "Faith",
+        "theme": "Morning ritual and pre-creative check-in",
+        "emoji": "🕊️"
+      }
+    },
+    {
+      "id": "ruby",
+      "name": "Ruby",
+      "soulFile": "agents/ruby/SOUL.md",
+      "workspaceDir": "agents/ruby",
+      "model": "anthropic/claude-opus-4-6",
+      "telegramAccount": "ruby",
+      "identity": {
+        "name": "Ruby",
+        "theme": "Daytime conversational agent — meals, key decisions, dopamine, screenshots, general chat",
+        "emoji": "💎"
+      }
+    },
+    {
+      "id": "work-session",
+      "name": "Forge",
+      "soulFile": "agents/forge/SOUL.md",
+      "workspaceDir": "agents/forge",
+      "model": "openai-codex/gpt-5.2",
+      "telegramAccount": "forge",
+      "identity": {
+        "name": "Forge",
+        "theme": "Work session coach",
+        "emoji": "⚡"
+      }
+    },
+    {
+      "id": "night-routine",
+      "name": "Luna",
+      "soulFile": "agents/luna/SOUL.md",
+      "workspaceDir": "agents/luna",
+      "model": "anthropic/claude-opus-4-6",
+      "telegramAccount": "luna",
+      "identity": {
+        "name": "Luna",
+        "theme": "Night routine and planning",
+        "emoji": "🌙"
+      }
+    },
+    {
+      "id": "vf-game",
+      "name": "Void",
+      "soulFile": "agents/void/SOUL.md",
+      "workspaceDir": "agents/void",
+      "model": "anthropic/claude-opus-4-6",
+      "telegramAccount": "void",
+      "identity": {
+        "name": "Void",
+        "theme": "VF Game mirror and inner work exploration",
+        "emoji": "🪞"
+      }
+    }
+  ],
+  "telegramAccountTemplate": {
+    "dmPolicy": "allowlist",
+    "botToken": "<BOT_TOKEN>",
+    "allowFrom": ["<YOUR_TELEGRAM_ID>"],
+    "groupPolicy": "allowlist",
+    "streaming": "partial"
+  }
+}
