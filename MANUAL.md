@@ -21,7 +21,6 @@ Every day is an episode of your show. You're not "doing routines" — you're pla
 | **Ruby** 💎 | @RubyLimitlessBot | Anytime during the day | Casual chat. Log meals, key decisions, dopamine events, notable moments. Your always-on companion. |
 | **Void** 🪞 | @VoidLimitlessBot | Night / anytime | VF Game exploration. Deep inner work. Key decisions, boss encounters, chapter writing. |
 | **Luna** 🌙 | @limitless_luna_bot | Night routine | Night planning and reflection. (May be retired — app handles tracking now.) |
-| **Pulse** 📊 | @limitless_pulse_bot | When you send screenshots | Processes Sleep Cycle + FitMind screenshots. Extracts data automatically. |
 | **KimCodey** 🤖 | @KimCodeyBot | When you need code | Coding agent. Send tasks, gets them done. |
 | **Stratos** 🤙 | @OStratosOKaramanisBot | Anytime | The engine. System builder, project manager, your co-builder. |
 
@@ -51,7 +50,7 @@ Top of every screen: shows current episode number + title. "Ep. 47 — The one w
 
 ### 🌅 Wake Up
 1. **Open Faith** — she greets you, gets you present. Logs your sleep data and morning state (energy, clarity, mood).
-2. **Send screenshots to Pulse** — Sleep Cycle screenshot (sleep score) + FitMind screenshot (meditation score). Pulse extracts the numbers.
+2. **Send screenshots to Ruby** — Sleep Cycle screenshot (sleep score) + FitMind screenshot (meditation score). She extracts the numbers.
 3. **Open the app → Flow tab** — Start your morning routine cards. Each item is hold-to-complete.
 4. **Dawn check-in** (optional) — if you want a coached morning conversation.
 
@@ -180,7 +179,7 @@ Votes feed into the State tab, Home screen, and history. They're the objective r
 **Night routine:** App → Flow tab (auto-transitions after work sessions)
 **VF Game:** Message Void or App → Flow tab → Bed Routine → VF Game card
 **Check history:** App → History tab
-**Send screenshots:** Send to Pulse
+**Send screenshots:** Send to Ruby
 
 ---
 
