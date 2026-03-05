@@ -97,6 +97,12 @@ const STUBS = {
   'midday-checkin': {
     date: null, triggeredAt: null, energyScore: null, notes: '', rawNotes: ''
   },
+  'nutrition': {
+    date: null,
+    meals: [],
+    averageScore: null,
+    totalMeals: 0
+  },
   'dopamine': {
     date: null,
     farming: { sessions: [], totalPoints: 0, totalMinutes: 0 },
@@ -1252,6 +1258,54 @@ app.get('/boss-encounters', (req, res) => {
   } catch {
     res.json([])
   }
+})
+
+// ─── Nutrition Logging ────────────────────────────────────────────────────────
+
+const MEAL_TIMES = new Set(['breakfast', 'lunch', 'dinner', 'snack'])
+
+app.post('/nutrition', (req, res) => {
+  const { meal, time, nutritionScore, notes } = req.body
+  if (!meal) return res.status(400).json({ error: 'meal required' })
+
+  const today = todayStr()
+  let data = resetForNewDay('nutrition', today)
+  data.date = today
+
+  const entry = {
+    id: randomUUID(),
+    timestamp: nowIso(),
+    meal,
+    time: MEAL_TIMES.has(time) ? time : 'snack',
+    nutritionScore: nutritionScore ?? null,
+    notes: notes || ''
+  }
+  data.meals.push(entry)
+  data.totalMeals = data.meals.length
+
+  const scored = data.meals.filter(m => m.nutritionScore != null)
+  data.averageScore = scored.length > 0
+    ? Math.round((scored.reduce((s, m) => s + m.nutritionScore, 0) / scored.length) * 10) / 10
+    : null
+
+  writeJson('nutrition', data)
+
+  // Generate vote if scored
+  if (nutritionScore != null) {
+    let votesData = resetForNewDay('votes', today)
+    votesData.date = today
+    votesData.votes.push({
+      id: randomUUID(), timestamp: nowIso(),
+      action: `Meal: ${meal}${nutritionScore >= 7 ? ' (clean)' : nutritionScore <= 3 ? ' (junk)' : ''}`,
+      category: 'nutrition',
+      polarity: nutritionScore >= 5 ? 'positive' : 'negative',
+      source: 'nutrition-log',
+      weight: 1
+    })
+    writeJson('votes', votesData)
+  }
+
+  res.json({ ok: true, entry, averageScore: data.averageScore, totalMeals: data.totalMeals })
 })
 
 // ─── Dopamine Tracking ────────────────────────────────────────────────────────
