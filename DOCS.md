@@ -1,6 +1,6 @@
 # Limitless System — Full Documentation
 
-**Last updated:** 2026-03-05
+**Last updated:** 2026-03-09
 **Built by:** Stratos
 **Repo:** github.com/stratosokaramanis-droid/limitless-app
 
@@ -14,9 +14,7 @@ The system has three layers:
 
 1. **A React PWA** — accessed from Stef's phone via Cloudflare tunnel
 2. **AI agents on Telegram** — 6 specialized agents, each with a distinct role and personality
-3. **An Express file server** — the single write authority that bridges everything
-
-There is no traditional database. The backend is a set of **shared JSON files** on the local machine. The file server is the only thing that reads from and writes to these files. Both the app and the agents go through the file server API.
+3. **An Express server with SQLite** — the single write authority that bridges everything
 
 ---
 
@@ -40,15 +38,16 @@ There is no traditional database. The backend is a set of **shared JSON files** 
                     └────────────┬──────────────────┘
                                  │
                     ┌────────────▼──────────────────┐
-                    │   EXPRESS FILE SERVER          │
+                    │   EXPRESS SERVER               │
                     │   localhost:3001               │
                     │   ★ SINGLE WRITE AUTHORITY ★   │
                     │   All reads and writes go here │
                     └────────────┬──────────────────┘
                                  │ reads/writes
                     ┌────────────▼──────────────────┐
-                    │   SHARED DATA LAYER            │
+                    │   SQLite (WAL mode)            │
                     │   ~/.openclaw/data/shared/     │
+                    │   limitless.db                 │
                     └────────────┬──────────────────┘
                                  │ via curl to :3001
    ┌──────┬────────┬──────┬──────┼──────┬──────┐
@@ -59,14 +58,23 @@ There is no traditional database. The backend is a set of **shared JSON files** 
 
 ### The Golden Rule
 
-**The file server is the only thing that touches the data files.**
+**The server is the only thing that touches the database.**
 
-- The app calls `POST /api/<endpoint>` through the Vite proxy → file server writes
-- Agents call `curl -X POST http://localhost:3001/<endpoint>` → file server writes
+- The app calls `POST /api/<endpoint>` through the Vite proxy → server writes to SQLite
+- Agents call `curl -X POST http://localhost:3001/<endpoint>` → server writes to SQLite
 - Agents call `curl http://localhost:3001/<endpoint>` to read
-- Nothing writes to `~/.openclaw/data/shared/` directly. Ever.
+- Nothing touches `limitless.db` directly. Ever.
 
-This prevents race conditions, ensures day-reset logic always runs, preserves historical archives, and validates all input through field whitelists.
+This prevents race conditions, provides ACID transactions on multi-table writes, validates all input through field whitelists, and logs every API call for agent evaluation.
+
+### Server Components
+
+| File | Purpose | Lines |
+|------|---------|-------|
+| `server/index.js` | Express routes, middleware, XP engine | ~900 |
+| `server/db.js` | DB init, prepared statements, 9 transaction functions, `rowToApi`/`apiToRow` | ~570 |
+| `server/schema.sql` | Full SQLite schema — 36 tables, all with `user_id` | ~340 |
+| `server/migrate-to-sqlite.js` | One-time migration: JSON/JSONL files → SQLite | ~320 |
 
 ---
 
@@ -118,6 +126,52 @@ All agents run inside **OpenClaw** (AI gateway daemon). Each has its own Telegra
 | Luna | `/morning-state`, `/creative-state`, `/work-sessions`, `/votes`, `/night-routine` | `/night-routine`, `/votes`, `/events` |
 | Void | `/vf-game`, `/key-decisions`, `/votes`, `/boss-encounters` | `/vf-game`, `/key-decisions`, `/boss-encounters`, `/votes` |
 | Pulse | — | `/sleep-data`, `/fitmind-data`, `/votes`, `/events` |
+
+### Agent API Call Logging & Reasoning
+
+Every request to the server is logged to the `api_calls` table for agent evaluation:
+
+```
+timestamp | method | path | source | duration_ms | response_status | agent_reasoning
+```
+
+Agents can attach their thinking/reasoning to any API call:
+
+**Via header (recommended for curl):**
+```bash
+curl -X POST localhost:3001/key-decisions \
+  -H "Content-Type: application/json" \
+  -H "X-Source: void" \
+  -H "X-Agent-Reasoning: User described resisting phone urge during deep work. Logging as resist-type key decision with 3x multiplier." \
+  -d '{"description":"resisted phone","type":"resist"}'
+```
+
+**Via body field:**
+```bash
+curl -X POST localhost:3001/votes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "votes": [{"action":"completed morning ritual","category":"mental-power","polarity":"positive","source":"faith"}],
+    "_reasoning": "All 5 morning block items done. User showed strong presence during check-in."
+  }'
+```
+
+The `_reasoning` field is stripped from stored request body/keys — it only appears in the `agent_reasoning` column of `api_calls`.
+
+**Querying agent behavior:**
+```bash
+# Last 100 calls
+curl localhost:3001/api-calls?limit=100
+
+# Calls from a specific agent
+curl "localhost:3001/api-calls?limit=50" | jq '.[] | select(.source == "faith")'
+
+# SQL queries for deeper analysis (via better-sqlite3 or DB browser)
+SELECT source, path, agent_reasoning, timestamp
+FROM api_calls
+WHERE source = 'void' AND agent_reasoning IS NOT NULL
+ORDER BY timestamp DESC;
+```
 
 ---
 
@@ -276,19 +330,69 @@ Static definitions: `server/data/badges.json` (35 exercises), `server/data/missi
 
 ---
 
-## 7. The File Server
+## 7. The Server
 
-**Location:** `~/limitless-app/server/index.js`
+**Location:** `server/index.js` + `server/db.js` + `server/schema.sql`
 **Port:** 3001
 **Start:** `npm run server` or `npm run dev:all`
 
 ### Design Principles
 
-1. **Single write authority** — the ONLY process that writes to `~/.openclaw/data/shared/`
-2. **Field whitelisting** — every POST endpoint only accepts known fields
-3. **Idempotent archiving** — day transition archives yesterday's data exactly once
-4. **Request logging** — all POST requests logged with timestamp and field keys
-5. **Crash protection** — `uncaughtException` and `unhandledRejection` handlers
+1. **Single write authority** — the ONLY process that touches `limitless.db`
+2. **SQLite with WAL mode** — fast concurrent reads, ACID transactions for multi-table writes
+3. **Field whitelisting** — every POST endpoint only accepts known fields via `pick()`
+4. **Multi-user isolation** — every table scoped by `user_id`, default user if no header sent
+5. **API call logging** — every request logged with source, duration, and optional agent reasoning
+6. **Crash protection** — `uncaughtException` and `unhandledRejection` handlers
+7. **camelCase API / snake_case DB** — `rowToApi()` and `apiToRow()` handle conversion
+
+### Middleware Stack
+
+1. **CORS** — open (localhost only)
+2. **JSON body parser** — `express.json()`
+3. **User resolution** — reads `X-User-Id` header, validates against `users` table, falls back to default
+4. **API call logger** — intercepts `res.json()`, measures duration, captures source + reasoning, writes to `api_calls`
+
+### Multi-User Support
+
+```
+X-User-Id: 00000000-0000-0000-0000-000000000001  (default, "stef")
+X-User-Id: <any-valid-uuid>                        (other users)
+(no header)                                         (falls back to default)
+```
+
+- Default user seeded on boot
+- Create users: `POST /users` with `{"name": "alice"}`
+- List users: `GET /users`
+- Data fully isolated — user A cannot see user B's votes, sessions, etc.
+- Port 3001 is localhost-only so UUID-as-identity is sufficient (no auth)
+
+### Database Schema Overview
+
+All tables defined in `server/schema.sql`. Key design:
+
+- **Daily tables** use `PRIMARY KEY (user_id, date)` — one row per user per day
+- **Child tables** (morning_block_items, votes, work_sessions, nutrition, etc.) use separate PKs with `(user_id, date)` indexes
+- **Persistent tables** (badge_progress, badge_missions_*) use `PRIMARY KEY (user_id, badge_slug)` or similar
+- **Append-only tables** (events, boss_encounters, vf_chapters) use auto-increment or UUID PKs with `user_id` column
+- JSON arrays/objects stored as TEXT, parsed on read with `parseJsonField()`
+- Booleans stored as INTEGER (0/1), converted to true/false in API responses
+
+### Transactions
+
+Multi-table writes that were previously non-atomic are now wrapped in SQLite transactions:
+
+| Transaction | Tables touched |
+|-------------|---------------|
+| `logKeyDecision` | key_decisions + votes + plot_points |
+| `logVfSession` | vf_sessions + vf_affirmations + votes |
+| `logBossEncounter` | boss_encounters + key_decisions + votes + plot_points + badge_progress |
+| `logNutrition` | nutrition + votes |
+| `logDopamineFarmEnd` | dopamine_farming + dopamine_daily + votes |
+| `logDopamineOverstim` | dopamine_overstimulation + dopamine_daily + votes |
+| `assignMissions` | badge_missions_active + badge_missions_completed + meta |
+| `completeMission` | badge_missions_active + badge_missions_completed + badge_progress + badge_mission_attempts |
+| `exerciseBadge` | badge_progress + badge_exercises |
 
 ### Work Session Actions
 
@@ -311,7 +415,7 @@ Full list: `server/data/work-session-actions.md`
 
 | Endpoint | Returns |
 |----------|---------|
-| `GET /health` | Server status, uptime, data dir |
+| `GET /health` | Server status, uptime, storage type |
 | `GET /morning-state` | Today's morning check-in (Faith) |
 | `GET /creative-state` | Today's pre-creative check-in (Faith) |
 | `GET /sleep-data` | Today's sleep data |
@@ -322,78 +426,98 @@ Full list: `server/data/work-session-actions.md`
 | `GET /nutrition` | Today's meals (Ruby) |
 | `GET /dopamine` | Today's dopamine tracking (Ruby) |
 | `GET /key-decisions` | Today's key decisions (Ruby/Void) |
-| `GET /boss-encounters` | All boss encounters (append-only) |
+| `GET /boss-encounters` | All boss encounters (filterable by ?badge=) |
 | `GET /vf-game` | Today's VF Game sessions (Void) |
+| `GET /vf-score` | Computed VF score for today |
+| `GET /vf-chapters` | All VF chapters (optionally ?limit=N) |
 | `GET /badge-progress` | Cumulative badge XP and tiers |
 | `GET /badge-missions` | Active + completed missions |
 | `GET /badge-daily` | Today's badge exercises and attempts |
 | `GET /badges` | All badge definitions + exercises |
-| `GET /history` | List of archived dates |
-| `GET /history/:date` | All files for a specific date |
+| `GET /badges/missions` | All mission definitions |
+| `GET /affirmations` | VF Game affirmation statements |
+| `GET /episode` | Today's episode |
+| `GET /episodes` | All episodes (optionally ?limit=N) |
+| `GET /history` | List of dates that have data |
+| `GET /history/:date` | Full day snapshot for a date |
+| `GET /history/:date/:file` | Single data type for a date |
+| `GET /users` | All registered users |
+| `GET /api-calls` | Logged API calls (?limit=N, ?user=ID) |
+| `GET /events` | All events |
 
 #### Write (POST)
 
-| Endpoint | Called by |
-|----------|----------|
-| `POST /morning-state` | Faith |
-| `POST /creative-state` | Faith |
-| `POST /sleep-data` | Faith, Ruby, Pulse |
-| `POST /fitmind-data` | Ruby, Pulse |
-| `POST /nutrition` | Ruby, Forge |
-| `POST /key-decisions` | Ruby, Void |
-| `POST /dopamine/overstimulation` | Ruby |
-| `POST /dopamine/farm-start` | Ruby |
-| `POST /dopamine/farm-end` | Ruby |
-| `POST /dopamine/screen-time` | Ruby, Pulse |
-| `POST /boss-encounters` | Ruby, Void, Luna |
-| `POST /vf-game` | Void |
-| `POST /work-sessions/start` | Forge |
-| `POST /work-sessions/end` | Forge |
-| `POST /midday-checkin` | Forge |
-| `POST /votes` | All agents |
-| `POST /events` | All agents |
-| `POST /night-routine` | Luna |
-| `POST /badge-progress/exercise` | Any agent |
-| `POST /badge-missions/assign` | Any agent / user-triggered |
-| `POST /badge-missions/complete` | Any agent |
-
-### Day Reset Logic
-
-Every POST handler calls `resetForNewDay(fileName, today)`:
-1. Read current file. If `data.date !== today`:
-   - Archive all files to `history/YYYY-MM-DD/` (idempotent — skips if exists)
-   - Return fresh stub with `date = today`
-2. If `data.date === today`: return existing data.
+| Endpoint | Called by | Transaction? |
+|----------|----------|-------------|
+| `POST /morning-state` | Faith | No |
+| `POST /creative-state` | Faith | No |
+| `POST /sleep-data` | Faith, Ruby, Pulse | No |
+| `POST /fitmind-data` | Ruby, Pulse | No |
+| `POST /morning-block-log` | App | No |
+| `POST /creative-block-log` | App | No |
+| `POST /midday-checkin` | Forge | No |
+| `POST /nutrition` | Ruby, Forge | Yes (nutrition + votes) |
+| `POST /key-decisions` | Ruby, Void | Yes (key_decisions + votes + plot_points) |
+| `POST /dopamine/farm-start` | Ruby | No |
+| `POST /dopamine/farm-end` | Ruby | Yes (farming + daily + votes) |
+| `POST /dopamine/overstimulation` | Ruby | Yes (overstim + daily + votes) |
+| `POST /dopamine/screen-time` | Ruby, Pulse | No |
+| `POST /boss-encounters` | Ruby, Void, Luna | Yes (encounters + decisions + votes + progress + plot_points) |
+| `POST /vf-game` | Void | Yes (sessions + affirmations + votes) |
+| `POST /vf-chapters` | Void | No |
+| `POST /work-sessions/start` | Forge | No |
+| `POST /work-sessions/end` | Forge | No |
+| `POST /votes` | All agents | No (loop insert) |
+| `POST /events` | All agents | No (loop insert) |
+| `POST /night-routine` | Luna | No |
+| `POST /episode` | App/Agent | No |
+| `POST /episode/plot-point` | App/Agent | No |
+| `POST /badge-progress/exercise` | Any agent | Yes (progress + exercises) |
+| `POST /badge-missions/assign` | Any agent | Yes (expire old + insert new + meta) |
+| `POST /badge-missions/complete` | Any agent | Yes (active + completed + progress + attempts) |
+| `POST /users` | Admin | No |
 
 ---
 
-## 8. The Shared Data Layer
+## 8. The Data Layer
 
-**Directory:** `~/.openclaw/data/shared/`
+**Database:** `~/.openclaw/data/shared/limitless.db` (SQLite, WAL mode)
+**Schema:** `server/schema.sql` (36 tables)
 
-Full schema with all fields and types: see `server/DATA_SCHEMA.md`.
+### How It Works Now vs Before
 
-### File Overview
+| Before (JSON files) | After (SQLite) |
+|---------------------|----------------|
+| `readJson('sleep-data')` | `db.sleepData.get.get(userId, today)` |
+| `writeJson('sleep-data', data)` | `db.sleepData.upsert.run({...})` |
+| `resetForNewDay(name, today)` | Not needed — date is just a column |
+| `archiveDay(dateStr)` | Not needed — history is just a query |
+| `fs.appendFileSync('events.jsonl')` | `db.events.insert.run({...})` |
+| Multi-file write (no atomicity) | `db.transactions.logKeyDecision(...)` |
+| `readPersistent('badge-progress')` | `db.badgeProgress.getAll.all(userId)` |
 
-| File | Reset | Written by |
-|------|-------|-----------|
-| `morning-state.json` | Daily | Faith |
-| `creative-state.json` | Daily | Faith |
-| `sleep-data.json` | Daily | Faith, Ruby, Pulse |
-| `fitmind-data.json` | Daily | Ruby, Pulse |
-| `work-sessions.json` | Daily | Forge |
-| `votes.json` | Daily | All agents |
-| `nutrition.json` | Daily | Ruby, Forge |
-| `dopamine.json` | Daily | Ruby |
-| `night-routine.json` | Daily | Luna |
-| `midday-checkin.json` | Daily | Forge |
-| `vf-game.json` | Daily | Void |
-| `badge-daily.json` | Daily | Badge XP engine |
-| `badge-progress.json` | **Persistent** | Badge XP engine |
-| `badge-missions.json` | **Persistent** | Badge mission engine |
-| `episode.json` | Daily | (episode framing — spec written, not yet live) |
-| `events.jsonl` | Append-only | All agents |
-| `boss-encounters.jsonl` | Append-only | Ruby, Void, Luna |
+### API Response Shapes
+
+**Unchanged.** All GET endpoints return the exact same camelCase JSON shapes as before. The `DATA_SCHEMA.md` file remains accurate for API consumers. Internally, the DB uses snake_case columns — `rowToApi()` handles the conversion.
+
+### Day Boundaries
+
+No explicit day reset logic. Daily data simply has a `date` column. When a GET is called, it queries for `WHERE date = today`. Historical data is queryable at any time via `GET /history/:date`.
+
+### JSON Fields in SQLite
+
+Some fields (arrays, nested objects) are stored as TEXT in SQLite and parsed on read:
+
+| Field | Table | Stored as |
+|-------|-------|-----------|
+| `insights` | morning_state, creative_state | JSON array string |
+| `activities` | creative_state | JSON array string |
+| `nutrition` | creative_state | JSON object string |
+| `rawExtracted` | sleep_data | JSON object string |
+| `topApps` | dopamine_daily | JSON array string |
+| `keyDecisionsLinked` | vf_sessions | JSON array string |
+| `keyMoments`, `bossesNamed`, `affirmationShifts` | vf_chapters | JSON array strings |
+| `payload` | events | JSON object string |
 
 ---
 
@@ -484,15 +608,6 @@ src/
 ├── utils/
 │   ├── haptics.js            ← Taptic feedback wrapper
 │   └── sounds.js             ← Audio feedback wrapper
-server/
-├── index.js                  ← the file server (single write authority)
-├── DATA_SCHEMA.md            ← full data schema reference
-└── data/
-    ├── affirmations.json     ← VF Game affirmation statements
-    ├── badges.json           ← 7 badge definitions + 35 exercises
-    ├── missions.json         ← 105 pre-written missions
-    ├── badge-progress.json   ← seeded empty progress (for fresh install)
-    └── work-session-actions.md  ← available work session action types
 ```
 
 ### UI Design Principles
@@ -517,42 +632,29 @@ server/
 # Start OpenClaw (all agents)
 openclaw gateway start
 
-# Start app + file server
+# Start app + server
 cd ~/limitless-app
 npm run dev:all
 # → App: http://localhost:3002
-# → File server: http://localhost:3001
+# → Server: http://localhost:3001
 ```
 
-### Integration Tests
+### First-Time Setup with Existing Data
 
+If migrating from the old JSON-based server:
 ```bash
-cd ~/limitless-app
-npm run server &
-bash scripts/test-integrations.sh
-# 89/89 passing
+npm run migrate
+# Reads all JSON/JSONL/history files → inserts into SQLite
+# Safe to run multiple times (INSERT OR IGNORE)
+# Keep JSON files as rollback safety net
 ```
-
-### Historical Snapshots
-
-When a new day triggers a reset, yesterday's data is archived:
-
-```
-~/.openclaw/data/shared/history/
-├── 2026-03-04/
-│   ├── morning-state.json
-│   ├── votes.json
-│   └── ... (all daily files)
-```
-
-Queryable via `GET /history`, `GET /history/:date`, `GET /history/:date/:file`.
 
 ### Cloudflare Tunnel
 
 `the-limitless-system.work` → `localhost:3002`
 
 Three things must be running:
-1. `npm run dev:all` (app :3002 + file server :3001)
+1. `npm run dev:all` (app :3002 + server :3001)
 2. `openclaw gateway start`
 3. `cloudflared` systemd service
 
@@ -577,6 +679,7 @@ See `DEPLOY.md` for full setup instructions.
 limitless-app/
 ├── README.md               ← brief intro
 ├── DOCS.md                 ← this file
+├── CLAUDE.md               ← AI assistant instructions
 ├── MANUAL.md               ← user-facing how-to
 ├── DEPLOY.md               ← deployment guide (zero to running)
 ├── PLAN.md                 ← dev roadmap + open questions
@@ -602,8 +705,13 @@ limitless-app/
 │   ├── setup-agents.sh     ← installs agent workspaces + prints openclaw.json snippets
 │   └── test-integrations.sh
 ├── server/
-│   ├── index.js
-│   ├── DATA_SCHEMA.md      ← full data schema
+│   ├── index.js            ← Express routes + middleware (~900 lines)
+│   ├── db.js               ← SQLite layer: prepared statements + transactions (~570 lines)
+│   ├── schema.sql          ← Full schema (36 tables, source of truth)
+│   ├── migrate-to-sqlite.js ← One-time JSON → SQLite migration
+│   ├── DATA_SCHEMA.md      ← API response shapes (camelCase JSON)
+│   ├── SQLITE_MIGRATION.md ← Original migration plan (historical)
+│   ├── SYSTEM_RESEARCH.md  ← Data layer analysis (historical)
 │   └── data/               ← static config (badges, missions, affirmations)
 └── src/                    ← React app
 ```
@@ -614,8 +722,11 @@ limitless-app/
 
 | Component | Status |
 |-----------|--------|
-| Express file server (all endpoints, validation, archiving) | ✅ |
-| Shared data layer (16 files + 2 append-only) | ✅ |
+| Express server (SQLite, all endpoints, validation, transactions) | ✅ |
+| SQLite schema (36 tables, multi-user, WAL mode) | ✅ |
+| API call logging + agent reasoning capture | ✅ |
+| Multi-user support (user isolation, default user fallback) | ✅ |
+| Migration script (JSON/JSONL → SQLite) | ✅ |
 | Faith agent (dual-mode: morning + pre-creative) | ✅ |
 | Ruby agent (daytime: meals, key decisions, dopamine, screenshots) | ✅ |
 | Forge agent (work sessions → scores + votes) | ✅ |
@@ -643,20 +754,12 @@ limitless-app/
 | App: DopamineTracker (balance beam, farming timer, overstim grid) | ✅ |
 | App: Episode system (EpisodeOpen, EpisodeClose, EpisodeBar) | ✅ |
 | UI: SVG icon system (no emojis), atmospheric dark theme | ✅ |
-| Historical snapshots + /history endpoints | ✅ |
-| Integration tests (89/89) | ✅ |
+| Historical data queryable via /history endpoints | ✅ |
 | Cloudflare tunnel (the-limitless-system.work) | ✅ |
 | Agent SOUL.md files in repo | ✅ |
 | Agent knowledge files in repo | ✅ |
 | DATA_SCHEMA.md | ✅ |
 | DEPLOY.md | ✅ |
-| Session reset at 3am | ✅ |
-| Episode framing (spec written) | 🔲 |
-| Home screen dashboard (spec written) | 🔲 |
-| Mental Game screen (spec written) | 🔲 |
-| Night routine rebuild (spec written) | 🔲 |
-| Multi-user support | 🔲 |
-| Desktop dashboard | 🔲 |
 
 ---
 
@@ -665,14 +768,64 @@ limitless-app/
 | File | Purpose |
 |------|---------|
 | `~/.openclaw/openclaw.json` | OpenClaw config — agents, bots, auth (never in git) |
-| `~/.openclaw/data/shared/` | Live data directory |
-| `~/.openclaw/data/shared/history/` | Daily archives |
+| `~/.openclaw/data/shared/limitless.db` | SQLite database (all runtime data) |
 | `~/.openclaw/agents/*/workspace/SOUL.md` | Agent personalities + operating instructions |
-| `~/limitless-app/server/index.js` | The file server |
-| `~/limitless-app/server/DATA_SCHEMA.md` | Full data schema reference |
-| `~/limitless-app/server/data/badges.json` | Badge definitions + exercises (static) |
-| `~/limitless-app/server/data/missions.json` | 105 pre-written missions (static) |
-| `~/limitless-app/server/data/affirmations.json` | VF Game affirmation statements (static) |
-| `~/limitless-app/agents/agents.json` | Agent config reference (tokens excluded) |
-| `~/limitless-app/DEPLOY.md` | Full deployment guide |
-| `~/limitless-app/PLAN.md` | Dev roadmap |
+| `server/index.js` | Express routes + middleware |
+| `server/db.js` | SQLite prepared statements + transactions |
+| `server/schema.sql` | Full database schema (source of truth) |
+| `server/migrate-to-sqlite.js` | One-time JSON → SQLite migration |
+| `server/DATA_SCHEMA.md` | API response shape reference |
+| `server/data/badges.json` | Badge definitions + exercises (static) |
+| `server/data/missions.json` | 105 pre-written missions (static) |
+| `server/data/affirmations.json` | VF Game affirmation statements (static) |
+| `agents/agents.json` | Agent config reference (tokens excluded) |
+| `DEPLOY.md` | Full deployment guide |
+| `PLAN.md` | Dev roadmap |
+
+---
+
+## 15. Analytics Queries (New with SQLite)
+
+Now that data lives in SQL, these are available:
+
+```sql
+-- Sleep trend over 30 days
+SELECT date, hours_slept, sleep_score, quality
+FROM sleep_data WHERE user_id = ? AND date > date('now', '-30 days')
+ORDER BY date;
+
+-- Vote score per category over time
+SELECT date, category,
+  SUM(CASE WHEN polarity = 'positive' THEN weight ELSE 0 END) AS positive,
+  SUM(CASE WHEN polarity = 'negative' THEN weight ELSE 0 END) AS negative
+FROM votes WHERE user_id = ?
+GROUP BY date, category ORDER BY date;
+
+-- Work session flow scores over time
+SELECT date, AVG(flow_score) as avg_flow, COUNT(*) as sessions
+FROM work_sessions WHERE user_id = ? AND ended_at IS NOT NULL
+GROUP BY date;
+
+-- Agent call patterns (which agents call what, how often)
+SELECT source, path, COUNT(*) as calls, AVG(duration_ms) as avg_ms
+FROM api_calls WHERE source IS NOT NULL
+GROUP BY source, path ORDER BY calls DESC;
+
+-- Agent reasoning log (for evaluation)
+SELECT timestamp, source, path, agent_reasoning
+FROM api_calls
+WHERE agent_reasoning IS NOT NULL
+ORDER BY timestamp DESC LIMIT 50;
+
+-- Boss encounters faced vs avoided by month
+SELECT substr(timestamp, 1, 7) AS month,
+  SUM(CASE WHEN faced = 1 THEN 1 ELSE 0 END) AS faced,
+  SUM(CASE WHEN faced = 0 THEN 1 ELSE 0 END) AS avoided
+FROM boss_encounters WHERE user_id = ?
+GROUP BY month;
+
+-- XP progression per badge
+SELECT be.date, be.badge_slug, SUM(be.xp_gained) AS daily_xp
+FROM badge_exercises be WHERE be.user_id = ?
+GROUP BY be.date, be.badge_slug ORDER BY be.date;
+```

@@ -7,29 +7,31 @@ Personal daily operating system for Stef. Tracks the full day: morning ritual, c
 ## Architecture
 
 ```
-React PWA (port 3002) → Vite proxy /api/* → Express file server (port 3001) → JSON files (~/.openclaw/data/shared/)
-                                                                              ↑
-                                                            6 Telegram AI agents (via OpenClaw) call curl to :3001
+React PWA (port 3002) → Vite proxy /api/* → Express server (port 3001) → SQLite (~/.openclaw/data/shared/limitless.db)
+                                                                          ↑
+                                                        6 Telegram AI agents (via OpenClaw) call curl to :3001
 ```
 
 - **Frontend**: Vite + React 18 + Tailwind CSS + Framer Motion
-- **Server**: Single Express file (`server/index.js`, ~1550 lines) — the SINGLE WRITE AUTHORITY for all data
-- **Data**: Flat JSON files in `~/.openclaw/data/shared/`. No database (yet — SQLite migration planned, see `server/SQLITE_MIGRATION.md`)
+- **Server**: Express (`server/index.js`, ~900 lines) — the SINGLE WRITE AUTHORITY for all data
+- **Database**: SQLite via `better-sqlite3` in WAL mode. DB file: `~/.openclaw/data/shared/limitless.db`
+- **DB layer**: `server/db.js` (~570 lines) — prepared statements, transactions, `rowToApi`/`apiToRow` helpers
+- **Schema**: `server/schema.sql` — single source of truth for all 36 tables
 - **Agents**: 6 Telegram bots via OpenClaw gateway. Each has a SOUL.md personality file in `agents/*/SOUL.md`
 
-The file server is the only thing that touches data files. The app goes through the Vite proxy. Agents use curl to localhost:3001. Nothing writes directly to the data dir.
+The server is the only thing that touches the database. The app goes through the Vite proxy. Agents use curl to localhost:3001. Nothing writes directly to the DB.
 
 ## Stack & Commands
 
 ```bash
-npm run dev:all    # Start Vite (3002) + Express file server (3001) concurrently
+npm run dev:all    # Start Vite (3002) + Express server (3001) concurrently
 npm run dev        # Vite only
-npm run server     # Express file server only
+npm run server     # Express server only
 npm run build      # Production build
-bash scripts/test-integrations.sh  # Integration tests (requires server running)
+npm run migrate    # One-time: migrate JSON/JSONL files → SQLite
 ```
 
-Dependencies: react 18, framer-motion, express, cors, @radix-ui/react-slider, tailwindcss 3, vite 5.
+Dependencies: react 18, framer-motion, express, cors, better-sqlite3, @radix-ui/react-slider, tailwindcss 3, vite 5.
 
 ## Repo Structure
 
@@ -40,10 +42,13 @@ src/                          # React app
   data/                       # Morning/night routine item definitions
   utils/                      # Haptics, sounds
 server/
-  index.js                    # THE server — all routes, helpers, stubs, XP engine (~1550 lines)
-  DATA_SCHEMA.md              # Full schema reference for all JSON data types
-  SQLITE_MIGRATION.md         # Migration plan: JSON files → SQLite (better-sqlite3)
-  SYSTEM_RESEARCH.md          # Analysis of current data layer problems
+  index.js                    # THE server — all routes, middleware, XP engine (~900 lines)
+  db.js                       # DB init, prepared statements, transactions (~570 lines)
+  schema.sql                  # Full SQLite schema (36 tables, single source of truth)
+  migrate-to-sqlite.js        # One-time migration script: JSON/JSONL → SQLite
+  DATA_SCHEMA.md              # JSON data shape reference (still valid — API shapes unchanged)
+  SQLITE_MIGRATION.md         # Original migration plan (historical reference)
+  SYSTEM_RESEARCH.md          # Analysis of data layer problems (historical reference)
   data/                       # Static config: badges.json, missions.json, affirmations.json
 agents/
   agents.json                 # Agent config reference (no tokens)
@@ -73,24 +78,45 @@ scripts/
 
 ## Server Data Layer
 
-All runtime data in `~/.openclaw/data/shared/`. Three categories:
+All runtime data in SQLite at `~/.openclaw/data/shared/limitless.db`. Three categories:
 
-1. **Daily files** (reset when date changes): morning-state, creative-state, sleep-data, fitmind-data, work-sessions, votes, nutrition, dopamine, night-routine, midday-checkin, vf-game, badge-daily, episode, key-decisions, morning-block-log, creative-block-log
-2. **Persistent files** (survive across days): badge-progress.json, badge-missions.json
-3. **Append-only logs** (JSONL): events.jsonl, boss-encounters.jsonl, vf-chapters.jsonl
+1. **Daily tables** (keyed by `user_id + date`): morning_state, creative_state, sleep_data, fitmind_data, work_sessions, votes, nutrition, dopamine_*, night_routine, midday_checkin, vf_sessions, badge_exercises, episodes, key_decisions, morning_block_log, creative_block_log
+2. **Persistent tables** (keyed by `user_id + slug/id`): badge_progress, badge_missions_active, badge_missions_completed
+3. **Append-only tables**: events, boss_encounters, vf_chapters
 
-Day reset: first POST of a new day triggers `archiveDay()` → copies all daily files to `history/YYYY-MM-DD/`, then returns a fresh stub.
+No day reset logic needed — daily data simply has a `date` column. History is just a query.
 
 Every data type has a hardcoded stub in the STUBS object in server/index.js. GETs always return the stub shape, never 404.
 
+## Multi-User Support
+
+- `users` table with UUID primary key
+- Default user `00000000-0000-0000-0000-000000000001` ("stef") seeded on boot
+- Middleware reads `X-User-Id` header; falls back to default if absent
+- Every table scoped by `user_id` — full data isolation between users
+- **Nothing breaks if no header is sent** — agents and frontend work unchanged
+
+## Agent API Call Logging
+
+Every request is logged to the `api_calls` table:
+- `timestamp`, `method`, `path`, `source` (agent name), `duration_ms`, `response_status`
+- `request_keys`, `request_body` (POST only, truncated to 4KB)
+- `agent_reasoning` — optional thinking/context from the agent
+
+Agents can attach reasoning via:
+- **Header**: `X-Agent-Reasoning: why I made this call`
+- **Body field**: `"_reasoning": "why I made this call"` (stripped from stored request body/keys)
+
+Query via `GET /api-calls?limit=100` or `GET /api-calls?user=USER_ID&limit=50`.
+
 ## Key Server Patterns
 
-- `resetForNewDay(name, today)` — archive + reset on date change
 - `pick(req.body, ALLOWED_FIELDS)` — field whitelisting on every POST
-- `readJson(name)` / `writeJson(name, data)` — sync file I/O
-- `readPersistent(name)` / `writePersistent(name, data)` — for badge-progress, badge-missions
-- Multi-file routes (key-decisions, boss-encounters, vf-game, badge-progress/exercise, nutrition, dopamine/*) write to 2-3 files — no atomicity guarantee currently
-- XP engine: `getTierForXp`, `getStreakMultiplier`, `applyXp`, `updateStreak`
+- `db.*.upsert.run({...})` — INSERT ON CONFLICT UPDATE for daily tables
+- `db.transactions.*()` — ACID transactions for multi-table writes (key-decisions, vf-game, boss-encounters, missions, nutrition, dopamine)
+- `rowToApi(row)` — converts snake_case DB columns to camelCase API response (strips `user_id`)
+- `parseJsonField(val, fallback)` — parses JSON stored as TEXT in SQLite (insights, activities, nutrition, topApps, etc.)
+- XP engine: `getTierForXp`, `getStreakMultiplier` (unchanged)
 
 ## Frontend Patterns
 
@@ -111,21 +137,12 @@ rdf, frame-control, fearlessness, aggression, carefreeness, presence, bias-to-ac
 ## Important Rules
 
 - **Never commit tokens** — `~/.openclaw/openclaw.json` contains bot tokens and API keys, never in repo
-- **File server is the single write authority** — nothing writes to data dir directly
+- **Server is the single write authority** — nothing touches the DB directly
 - **Field whitelisting** — every POST only accepts known camelCase fields via `pick()`
-- **camelCase everywhere in API** — server stubs, request bodies, and responses all use camelCase
+- **camelCase everywhere in API** — request bodies and responses use camelCase; DB uses snake_case internally
 - **Stubs guarantee shape** — GETs always return valid objects even when empty
 - **Port 3001 never public** — always accessed through Vite proxy or localhost curl from agents
-- **Daily reset at 3am** — both app localStorage and server day-change logic
-
-## Planned: SQLite Migration
-
-The next major server change is migrating from JSON files to SQLite (`better-sqlite3`). See `server/SQLITE_MIGRATION.md` for full schema, migration script, and route-by-route transformation guide. Key points:
-- `better-sqlite3` is synchronous — matches current sync file I/O pattern
-- Frontend doesn't change — GET response shapes stay identical
-- Eliminates: archiveDay, pruneHistory, resetForNewDay, JSONL parsing
-- Enables: cross-day analytics, ACID transactions, proper SQL queries
-- DB file: `~/.openclaw/data/shared/limitless.db`
+- **Transactions for multi-table writes** — key-decisions, vf-game, boss-encounters, missions, nutrition, dopamine
 
 ## Documentation Map
 
@@ -135,6 +152,6 @@ The next major server change is migrating from JSON files to SQLite (`better-sql
 | MANUAL.md | User-facing how-to guide |
 | PLAN.md | Dev roadmap + open questions |
 | DEPLOY.md | Zero-to-running deployment guide |
-| server/DATA_SCHEMA.md | Every JSON data type with field types and examples |
-| server/SYSTEM_RESEARCH.md | Analysis of current data layer problems |
-| server/SQLITE_MIGRATION.md | Full SQLite migration plan with schema + code |
+| server/DATA_SCHEMA.md | API response shapes (camelCase JSON — still accurate) |
+| server/schema.sql | SQLite schema (snake_case, source of truth for DB structure) |
+| server/SQLITE_MIGRATION.md | Original migration plan (historical reference) |
