@@ -4,13 +4,12 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { randomUUID } from 'crypto'
+import db, { rowToApi, DEFAULT_USER_ID } from './db.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const app = express()
 const PORT = 3001
-const DATA_DIR = path.join(process.env.HOME, '.openclaw/data/shared')
-const HISTORY_DIR = path.join(DATA_DIR, 'history')
 
 // ─── Static reference data ────────────────────────────────────────────────────
 
@@ -21,20 +20,76 @@ const AFFIRMATIONS_DATA = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/
 app.use(cors())
 app.use(express.json())
 
-// ─── Request logging ──────────────────────────────────────────────────────────
+// ─── User resolution middleware ───────────────────────────────────────────────
 
 app.use((req, res, next) => {
-  if (req.method !== 'GET' || req.path === '/health') {
-    // skip noisy GET logs, but log health checks and all writes
-  }
-  if (req.method === 'POST') {
-    const summary = req.body ? Object.keys(req.body).join(',') : '(empty)'
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} keys=[${summary}]`)
+  const headerUserId = req.headers['x-user-id']
+  if (headerUserId) {
+    const user = db.users.get.get(headerUserId)
+    if (user) {
+      req.userId = headerUserId
+    } else {
+      req.userId = DEFAULT_USER_ID
+    }
+  } else {
+    req.userId = DEFAULT_USER_ID
   }
   next()
 })
 
-// ─── Stubs ────────────────────────────────────────────────────────────────────
+// ─── API call logging middleware ──────────────────────────────────────────────
+
+app.use((req, res, next) => {
+  const start = Date.now()
+
+  // Log POST requests to console
+  if (req.method === 'POST') {
+    const summary = req.body ? Object.keys(req.body).join(',') : '(empty)'
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.path} keys=[${summary}]`)
+  }
+
+  // Intercept res.json to capture status and log
+  const origJson = res.json.bind(res)
+  res.json = (body) => {
+    const duration = Date.now() - start
+    const status = res.statusCode || 200
+
+    try {
+      const source = (req.body && req.body.source) || req.headers['x-source'] || null
+      const agentReasoning = req.headers['x-agent-reasoning'] || req.body?._reasoning || null
+      const requestKeys = req.body ? Object.keys(req.body).filter(k => k !== '_reasoning').join(',') : null
+      let requestBody = null
+      if (req.method === 'POST' && req.body) {
+        const { _reasoning, ...bodyWithoutReasoning } = req.body
+        requestBody = JSON.stringify(bodyWithoutReasoning)
+        if (requestBody.length > 4096) requestBody = requestBody.slice(0, 4096)
+      }
+
+      db.apiCalls.insert.run({
+        timestamp: new Date().toISOString(),
+        user_id: req.userId,
+        method: req.method,
+        path: req.path,
+        source,
+        request_keys: requestKeys,
+        request_body: requestBody,
+        response_status: status,
+        duration_ms: duration,
+        error: status >= 400 && body && body.error ? body.error : null,
+        agent_reasoning: agentReasoning
+      })
+    } catch (err) {
+      // Don't let logging errors break the response
+      console.error('API call logging error:', err.message)
+    }
+
+    return origJson(body)
+  }
+
+  next()
+})
+
+// ─── Stubs (still used for fallback shapes) ──────────────────────────────────
 
 const STUBS = {
   'morning-block-log': {
@@ -98,10 +153,7 @@ const STUBS = {
     date: null, triggeredAt: null, energyScore: null, notes: '', rawNotes: ''
   },
   'nutrition': {
-    date: null,
-    meals: [],
-    averageScore: null,
-    totalMeals: 0
+    date: null, meals: [], averageScore: null, totalMeals: 0
   },
   'dopamine': {
     date: null,
@@ -114,86 +166,31 @@ const STUBS = {
     date: null, number: null,
     title: '', previouslyOn: '', todaysArc: '',
     plotPoints: [], rating: null, status: 'open'
-  }
-}
-
-const DAILY_FILES = Object.keys(STUBS)
-
-// ─── Persistent file stubs (no daily reset) ───────────────────────────────────
-
-const PERSISTENT_STUBS = {
-  'badge-progress': {
-    lastUpdated: null,
-    badges: Object.fromEntries(BADGES_DATA.badges.map((b) => [b.slug, {
-      tier: 1, tierName: 'Initiate', xp: 0,
-      exercisesCompleted: 0, missionsCompleted: 0, missionsFailed: 0,
-      bossEncounters: 0, currentStreak: 0, longestStreak: 0, lastActivityDate: null
-    }]))
-  },
-  'badge-missions': {
-    lastAssigned: null,
-    active: [],
-    completed: []
-  }
-}
-
-const DAILY_STUBS_EXTRA = {
-  'badge-daily': {
-    date: null,
-    exercises: [],
-    missionsAttempted: [],
-    xpGained: {}
   },
   'key-decisions': {
-    date: null,
-    decisions: [],
-    totalMultipliedWeight: 0
+    date: null, decisions: [], totalMultipliedWeight: 0
   },
   'vf-game': {
-    date: null,
-    sessions: []
+    date: null, sessions: []
+  },
+  'badge-daily': {
+    date: null, exercises: [], missionsAttempted: [], xpGained: {}
   }
 }
-
-// Add extra daily stubs to main stubs + daily files list
-Object.assign(STUBS, DAILY_STUBS_EXTRA)
-DAILY_FILES.push(...Object.keys(DAILY_STUBS_EXTRA))
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-const filePath = (name) => path.join(DATA_DIR, `${name}.json`)
 
 const freshStub = (name) => structuredClone(STUBS[name])
 
-const readJson = (name) => {
-  try {
-    const raw = fs.readFileSync(filePath(name), 'utf8')
-    return JSON.parse(raw)
-  } catch {
-    return freshStub(name)
-  }
-}
-
-const writeJson = (name, data) => {
-  fs.writeFileSync(filePath(name), JSON.stringify(data, null, 2), 'utf8')
-}
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const nowIso = () => new Date().toISOString()
 const todayStr = () => new Date().toISOString().slice(0, 10)
 
-// Persistent file helpers (no day reset)
-const readPersistent = (name) => {
-  try {
-    const raw = fs.readFileSync(filePath(name), 'utf8')
-    return JSON.parse(raw)
-  } catch {
-    return structuredClone(PERSISTENT_STUBS[name])
+const pick = (obj, keys) => {
+  const result = {}
+  for (const k of keys) {
+    if (obj[k] !== undefined) result[k] = obj[k]
   }
-}
-
-const writePersistent = (name, data) => {
-  data.lastUpdated = nowIso()
-  writeJson(name, data)
+  return result
 }
 
 // XP engine helpers
@@ -216,275 +213,525 @@ const getStreakMultiplier = (streak) => {
   return mult
 }
 
-const applyXp = (progress, badgeSlug, rawXp) => {
-  const badge = progress.badges[badgeSlug]
-  if (!badge) return 0
-  const mult = getStreakMultiplier(badge.currentStreak)
-  const xp = Math.round(rawXp * mult)
-  badge.xp = Math.max(0, badge.xp + xp)
-  const tier = getTierForXp(badge.xp)
-  badge.tier = tier.level
-  badge.tierName = tier.name
-  return xp
+// Parse JSON fields that are stored as strings in SQLite
+const parseJsonField = (val, fallback) => {
+  if (val == null) return fallback
+  if (typeof val === 'object') return val // already parsed
+  try { return JSON.parse(val) } catch { return fallback }
 }
 
-const updateStreak = (progress, badgeSlug, today) => {
-  const badge = progress.badges[badgeSlug]
-  if (!badge) return
-  if (badge.lastActivityDate === today) return // already counted today
+// ─── Night routine: DB row → nested API shape ───────────────────────────────
 
-  const yesterday = new Date()
-  yesterday.setDate(yesterday.getDate() - 1)
-  const yesterdayStr = yesterday.toISOString().slice(0, 10)
-
-  if (badge.lastActivityDate === yesterdayStr) {
-    badge.currentStreak += 1
-  } else if (badge.lastActivityDate && badge.lastActivityDate < yesterdayStr) {
-    badge.currentStreak = 1 // streak broken
-  } else {
-    badge.currentStreak = 1 // first activity
-  }
-
-  if (badge.currentStreak > badge.longestStreak) {
-    badge.longestStreak = badge.currentStreak
-  }
-  badge.lastActivityDate = today
-}
-
-// Pick only allowed keys from an object
-const pick = (obj, keys) => {
-  const result = {}
-  for (const k of keys) {
-    if (obj[k] !== undefined) result[k] = obj[k]
-  }
-  return result
-}
-
-// ─── Historical snapshot (idempotent) ─────────────────────────────────────────
-
-const archiveDay = (dateStr) => {
-  try {
-    const dayDir = path.join(HISTORY_DIR, dateStr)
-    // Idempotent: skip if already archived
-    if (fs.existsSync(dayDir)) return
-    fs.mkdirSync(dayDir, { recursive: true })
-    for (const name of DAILY_FILES) {
-      const src = filePath(name)
-      const dst = path.join(dayDir, `${name}.json`)
-      if (fs.existsSync(src)) fs.copyFileSync(src, dst)
+const nightRoutineRowToApi = (row) => {
+  if (!row) return null
+  return {
+    date: row.date,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    windDown: {
+      lettingGoCompleted: !!row.letting_go_completed,
+      lettingGoTimestamp: row.letting_go_timestamp,
+      nervousSystemCompleted: !!row.nervous_system_completed,
+      nervousSystemTimestamp: row.nervous_system_timestamp,
+      bodyScanCompleted: !!row.body_scan_completed,
+      bodyScanTimestamp: row.body_scan_timestamp
+    },
+    reflection: {
+      alterMemoriesCompleted: !!row.alter_memories_completed,
+      alterMemoriesTimestamp: row.alter_memories_timestamp,
+      dayReviewCompleted: !!row.day_review_completed,
+      dayReviewTimestamp: row.day_review_timestamp
+    },
+    planning: {
+      planCompleted: !!row.plan_completed,
+      planTimestamp: row.plan_timestamp,
+      planText: row.plan_text || '',
+      planFinalized: !!row.plan_finalized,
+      planFinalizedTimestamp: row.plan_finalized_timestamp
+    },
+    bed: {
+      promptsReviewed: !!row.prompts_reviewed,
+      promptsTimestamp: row.prompts_timestamp,
+      vfGameCompleted: !!row.vf_game_completed,
+      visualizationCompleted: !!row.visualization_completed,
+      lightsOut: !!row.lights_out,
+      lightsOutTimestamp: row.lights_out_timestamp
     }
-    pruneHistory(90)
-    console.log(`[${nowIso()}] Archived day: ${dateStr}`)
-  } catch (err) {
-    console.error('Archive failed:', err.message)
   }
 }
 
-const pruneHistory = (keepDays) => {
-  try {
-    const cutoff = new Date()
-    cutoff.setDate(cutoff.getDate() - keepDays)
-    const cutoffStr = cutoff.toISOString().slice(0, 10)
-    const dirs = fs.readdirSync(HISTORY_DIR).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-    for (const dir of dirs) {
-      if (dir < cutoffStr) fs.rmSync(path.join(HISTORY_DIR, dir), { recursive: true, force: true })
-    }
-  } catch {}
-}
-
-const resetForNewDay = (name, today) => {
-  const data = readJson(name)
-  if (data.date && data.date !== today) {
-    archiveDay(data.date)
-    return freshStub(name)
-  }
-  if (!data.date) return freshStub(name)
-  return data
-}
-
-// ─── Health ───────────────────────────────────────────────────────────────────
+// ─── Health ──────────────────────────────────────────────────────────────────
 
 app.get('/health', (req, res) => {
   res.json({
     ok: true,
     uptime: process.uptime(),
-    dataDir: DATA_DIR,
-    files: DAILY_FILES.length,
+    storage: 'sqlite',
     timestamp: nowIso()
   })
 })
 
-// ─── GET endpoints ────────────────────────────────────────────────────────────
+// ─── Simple daily GET endpoints ──────────────────────────────────────────────
 
-// Migrate old flat night-routine format to new nested format
-const migrateNightRoutine = (data) => {
-  if (data.windDown) return data // already new format
-  const migrated = {
-    date: data.date, startedAt: data.startedAt, completedAt: data.completedAt,
-    windDown: {
-      lettingGoCompleted: data.letGoCompleted || false, lettingGoTimestamp: data.letGoTimestamp || null,
-      nervousSystemCompleted: data.nervousSystemCompleted || false, nervousSystemTimestamp: data.nervousSystemTimestamp || null,
-      bodyScanCompleted: false, bodyScanTimestamp: null
-    },
-    reflection: {
-      alterMemoriesCompleted: data.alterMemoriesCompleted || false, alterMemoriesTimestamp: data.alterMemoriesTimestamp || null,
-      dayReviewCompleted: false, dayReviewTimestamp: null
-    },
-    planning: {
-      planCompleted: data.planCompleted || false, planTimestamp: data.planTimestamp || null,
-      planText: data.tomorrowPlan || '', planFinalized: false, planFinalizedTimestamp: null
-    },
-    bed: {
-      promptsReviewed: data.promptsReviewed || false, promptsTimestamp: data.promptsTimestamp || null,
-      vfGameCompleted: false, visualizationCompleted: false,
-      lightsOut: false, lightsOutTimestamp: null
-    }
-  }
-  return migrated
-}
-
-// Auto plot-point hook for key decisions + boss encounters
-const addAutoPlotPoint = (description, type) => {
-  const today = todayStr()
-  let data = resetForNewDay('episode', today)
-  if (!data.date || !data.number) return // no active episode today
-  data.plotPoints.push({
-    id: randomUUID(), timestamp: nowIso(), description, type
-  })
-  writeJson('episode', data)
-}
-
-DAILY_FILES.forEach((name) => {
-  // night-routine has a custom GET handler with migration
-  if (name === 'night-routine') return
-  app.get(`/${name}`, (req, res) => res.json(readJson(name)))
+app.get('/sleep-data', (req, res) => {
+  const row = db.sleepData.get.get(req.userId, todayStr())
+  if (!row) return res.json(freshStub('sleep-data'))
+  const api = rowToApi(row)
+  api.rawExtracted = parseJsonField(api.rawExtracted, {})
+  res.json(api)
 })
 
-// Custom GET for night-routine with old→new format migration
+app.get('/fitmind-data', (req, res) => {
+  const row = db.fitmindData.get.get(req.userId, todayStr())
+  if (!row) return res.json(freshStub('fitmind-data'))
+  const api = rowToApi(row)
+  api.workoutCompleted = !!api.workoutCompleted
+  res.json(api)
+})
+
+app.get('/morning-state', (req, res) => {
+  const row = db.morningState.get.get(req.userId, todayStr())
+  if (!row) return res.json(freshStub('morning-state'))
+  const api = rowToApi(row)
+  api.insights = parseJsonField(api.insights, [])
+  api.resistanceNoted = api.resistanceNoted != null ? !!api.resistanceNoted : null
+  res.json(api)
+})
+
+app.get('/creative-state', (req, res) => {
+  const row = db.creativeState.get.get(req.userId, todayStr())
+  if (!row) return res.json(freshStub('creative-state'))
+  const api = rowToApi(row)
+  api.activities = parseJsonField(api.activities, [])
+  api.insights = parseJsonField(api.insights, [])
+  api.nutrition = parseJsonField(api.nutrition, { logged: false, meal: null, notes: '' })
+  res.json(api)
+})
+
+app.get('/creative-block-log', (req, res) => {
+  const row = db.creativeBlockLog.get.get(req.userId, todayStr())
+  if (!row) return res.json(freshStub('creative-block-log'))
+  res.json(rowToApi(row))
+})
+
+app.get('/morning-block-log', (req, res) => {
+  const today = todayStr()
+  const log = db.morningBlockLog.get.get(req.userId, today)
+  const items = db.morningBlockItems.get.all(req.userId, today)
+
+  if (!log && items.length === 0) return res.json(freshStub('morning-block-log'))
+
+  const apiItems = items.map(rowToApi)
+  res.json({
+    date: today,
+    startedAt: log?.started_at || null,
+    completedAt: log?.completed_at || null,
+    items: apiItems,
+    completedCount: apiItems.filter((i) => i.status === 'done').length,
+    skippedCount: apiItems.filter((i) => i.status === 'skipped').length
+  })
+})
+
+app.get('/midday-checkin', (req, res) => {
+  const row = db.middayCheckin.get.get(req.userId, todayStr())
+  if (!row) return res.json(freshStub('midday-checkin'))
+  res.json(rowToApi(row))
+})
+
+app.get('/votes', (req, res) => {
+  const today = todayStr()
+  const rows = db.votes.getByDate.all(req.userId, today)
+  res.json({ date: today, votes: rows.map(rowToApi) })
+})
+
+app.get('/work-sessions', (req, res) => {
+  const today = todayStr()
+  const rows = db.workSessions.getByDate.all(req.userId, today)
+  const sessions = rows.map(rowToApi)
+  res.json({
+    date: today,
+    sessions,
+    totalSessions: 3,
+    completedSessions: sessions.filter((s) => s.endedAt).length,
+    lunchBreakLogged: false,
+    lunchMeal: null,
+    lunchNutritionScore: null
+  })
+})
+
 app.get('/night-routine', (req, res) => {
-  let data = readJson('night-routine')
-  data = migrateNightRoutine(data)
-  res.json(data)
+  const row = db.nightRoutine.get.get(req.userId, todayStr())
+  if (!row) return res.json(freshStub('night-routine'))
+  res.json(nightRoutineRowToApi(row))
+})
+
+app.get('/nutrition', (req, res) => {
+  const today = todayStr()
+  const rows = db.nutrition.getByDate.all(req.userId, today)
+  const meals = rows.map(rowToApi)
+  const scored = meals.filter((m) => m.nutritionScore != null)
+  const averageScore = scored.length > 0
+    ? Math.round((scored.reduce((s, m) => s + m.nutritionScore, 0) / scored.length) * 10) / 10
+    : null
+  res.json({ date: today, meals, averageScore, totalMeals: meals.length })
+})
+
+app.get('/dopamine', (req, res) => {
+  const today = todayStr()
+  const daily = db.dopamine.daily.get.get(req.userId, today)
+  const farming = db.dopamine.farming.getByDate.all(req.userId, today).map(rowToApi)
+  const overstim = db.dopamine.overstim.getByDate.all(req.userId, today).map(rowToApi)
+
+  res.json({
+    date: today,
+    farming: {
+      sessions: farming,
+      totalPoints: farming.reduce((s, f) => s + (f.points || 0), 0),
+      totalMinutes: farming.reduce((s, f) => s + (f.durationMinutes || 0), 0)
+    },
+    overstimulation: { events: overstim, totalEvents: overstim.length },
+    screenTime: {
+      totalMinutes: daily?.screen_minutes ?? null,
+      pickups: daily?.screen_pickups ?? null,
+      topApps: parseJsonField(daily?.screen_top_apps, []),
+      capturedAt: daily?.screen_captured_at ?? null
+    },
+    netScore: daily?.net_score ?? 5
+  })
+})
+
+app.get('/episode', (req, res) => {
+  const today = todayStr()
+  const row = db.episodes.get.get(req.userId, today)
+  if (!row) return res.json(freshStub('episode'))
+  const plotPoints = db.plotPoints.getByDate.all(req.userId, today).map(rowToApi)
+  const api = rowToApi(row)
+  api.plotPoints = plotPoints
+  res.json(api)
+})
+
+app.get('/key-decisions', (req, res) => {
+  const today = todayStr()
+  const rows = db.keyDecisions.getByDate.all(req.userId, today)
+  const decisions = rows.map(rowToApi)
+  const totalMultipliedWeight = decisions.reduce((s, d) => s + (d.multiplier || 0), 0)
+  res.json({ date: today, decisions, totalMultipliedWeight })
+})
+
+app.get('/vf-game', (req, res) => {
+  const today = todayStr()
+  const sessions = db.vfSessions.getByDate.all(req.userId, today).map((s) => {
+    const api = rowToApi(s)
+    const affs = db.vfAffirmations.getBySession.all(s.id).map((a) => ({
+      index: a.affirmation_index,
+      convictionScore: a.conviction_score,
+      resistanceScore: a.resistance_score,
+      exploration: a.exploration || '',
+      resistance: a.resistance || ''
+    }))
+    api.affirmations = affs
+    api.keyDecisionsLinked = parseJsonField(api.keyDecisionsLinked, [])
+    return api
+  })
+  res.json({ date: today, sessions })
+})
+
+app.get('/badge-daily', (req, res) => {
+  const today = todayStr()
+  const exercises = db.badgeExercises.getByDate.all(req.userId, today).map(rowToApi)
+  const missionsAttempted = db.badgeMissionAttempts.getByDate.all(req.userId, today).map((r) => ({
+    missionId: r.mission_id,
+    badgeSlug: r.badge_slug,
+    success: !!r.success,
+    xpGained: r.xp_gained,
+    timestamp: r.timestamp
+  }))
+  const xpGained = {}
+  for (const ex of exercises) {
+    xpGained[ex.badgeSlug] = (xpGained[ex.badgeSlug] || 0) + (ex.xpGained || 0)
+  }
+  for (const ma of missionsAttempted) {
+    xpGained[ma.badgeSlug] = (xpGained[ma.badgeSlug] || 0) + (ma.xpGained || 0)
+  }
+  res.json({ date: today, exercises, missionsAttempted, xpGained })
 })
 
 app.get('/events', (req, res) => {
-  try {
-    const raw = fs.readFileSync(path.join(DATA_DIR, 'events.jsonl'), 'utf8')
-    const events = raw.split('\n').filter(Boolean)
-      .map((line) => { try { return JSON.parse(line) } catch { return null } })
-      .filter(Boolean)
-    res.json(events)
-  } catch {
-    res.json([])
-  }
+  const rows = db.events.getAll.all(req.userId)
+  res.json(rows.map((r) => ({
+    timestamp: r.timestamp,
+    source: r.source,
+    type: r.type,
+    payload: parseJsonField(r.payload, {})
+  })))
 })
 
-// ─── GET /history ─────────────────────────────────────────────────────────────
+// ─── GET /history ────────────────────────────────────────────────────────────
 
 app.get('/history', (req, res) => {
-  try {
-    fs.mkdirSync(HISTORY_DIR, { recursive: true })
-    const dirs = fs.readdirSync(HISTORY_DIR)
-      .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))
-      .sort().reverse()
-    res.json(dirs)
-  } catch {
-    res.json([])
-  }
+  const rows = db.historyDates.all(req.userId, req.userId, req.userId, req.userId, req.userId)
+  res.json(rows.map((r) => r.date))
 })
 
 app.get('/history/:date', (req, res) => {
   const { date } = req.params
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date' })
-  const result = {}
-  for (const name of DAILY_FILES) {
-    try {
-      result[name] = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, date, `${name}.json`), 'utf8'))
-    } catch {
-      result[name] = freshStub(name)
+  const uid = req.userId
+
+  // Reconstruct the full day snapshot from DB
+  const sleepRow = db.sleepData.get.get(uid, date)
+  const morningStateRow = db.morningState.get.get(uid, date)
+  const creativeStateRow = db.creativeState.get.get(uid, date)
+  const creativeBlockRow = db.creativeBlockLog.get.get(uid, date)
+  const morningBlockRow = db.morningBlockLog.get.get(uid, date)
+  const morningBlockItems = db.morningBlockItems.get.all(uid, date)
+  const middayRow = db.middayCheckin.get.get(uid, date)
+  const fitmindRow = db.fitmindData.get.get(uid, date)
+  const workRows = db.workSessions.getByDate.all(uid, date)
+  const voteRows = db.votes.getByDate.all(uid, date)
+  const nightRow = db.nightRoutine.get.get(uid, date)
+  const nutritionRows = db.nutrition.getByDate.all(uid, date)
+  const episodeRow = db.episodes.get.get(uid, date)
+  const plotPointRows = db.plotPoints.getByDate.all(uid, date)
+  const kdRows = db.keyDecisions.getByDate.all(uid, date)
+  const vfRows = db.vfSessions.getByDate.all(uid, date)
+
+  // Sleep data
+  const sleepApi = sleepRow ? rowToApi(sleepRow) : freshStub('sleep-data')
+  if (sleepApi.rawExtracted) sleepApi.rawExtracted = parseJsonField(sleepApi.rawExtracted, {})
+
+  // Morning state
+  const morningStateApi = morningStateRow ? rowToApi(morningStateRow) : freshStub('morning-state')
+  if (morningStateApi.insights) morningStateApi.insights = parseJsonField(morningStateApi.insights, [])
+
+  // Creative state
+  const creativeStateApi = creativeStateRow ? rowToApi(creativeStateRow) : freshStub('creative-state')
+  if (creativeStateApi.activities) creativeStateApi.activities = parseJsonField(creativeStateApi.activities, [])
+  if (creativeStateApi.insights) creativeStateApi.insights = parseJsonField(creativeStateApi.insights, [])
+  if (creativeStateApi.nutrition) creativeStateApi.nutrition = parseJsonField(creativeStateApi.nutrition, { logged: false, meal: null, notes: '' })
+
+  // Morning block log
+  const morningBlockApi = morningBlockRow ? {
+    date, startedAt: morningBlockRow.started_at, completedAt: morningBlockRow.completed_at,
+    items: morningBlockItems.map(rowToApi),
+    completedCount: morningBlockItems.filter((i) => i.status === 'done').length,
+    skippedCount: morningBlockItems.filter((i) => i.status === 'skipped').length
+  } : freshStub('morning-block-log')
+
+  // Work sessions
+  const sessions = workRows.map(rowToApi)
+
+  // Episode
+  const episodeApi = episodeRow ? rowToApi(episodeRow) : freshStub('episode')
+  episodeApi.plotPoints = plotPointRows.map(rowToApi)
+
+  // VF sessions
+  const vfSessions = vfRows.map((s) => {
+    const api = rowToApi(s)
+    api.affirmations = db.vfAffirmations.getBySession.all(s.id).map((a) => ({
+      index: a.affirmation_index, convictionScore: a.conviction_score,
+      resistanceScore: a.resistance_score, exploration: a.exploration || '', resistance: a.resistance || ''
+    }))
+    api.keyDecisionsLinked = parseJsonField(api.keyDecisionsLinked, [])
+    return api
+  })
+
+  // Nutrition
+  const meals = nutritionRows.map(rowToApi)
+  const scored = meals.filter((m) => m.nutritionScore != null)
+
+  // Dopamine
+  const daily = db.dopamine.daily.get.get(uid, date)
+  const farming = db.dopamine.farming.getByDate.all(uid, date).map(rowToApi)
+  const overstim = db.dopamine.overstim.getByDate.all(uid, date).map(rowToApi)
+
+  // Key decisions
+  const decisions = kdRows.map(rowToApi)
+
+  // Badge daily
+  const badgeExercises = db.badgeExercises.getByDate.all(uid, date).map(rowToApi)
+  const badgeMissionAttempts = db.badgeMissionAttempts.getByDate.all(uid, date).map((r) => ({
+    missionId: r.mission_id, badgeSlug: r.badge_slug,
+    success: !!r.success, xpGained: r.xp_gained, timestamp: r.timestamp
+  }))
+
+  res.json({
+    'sleep-data': sleepApi,
+    'fitmind-data': fitmindRow ? (() => { const a = rowToApi(fitmindRow); a.workoutCompleted = !!a.workoutCompleted; return a })() : freshStub('fitmind-data'),
+    'morning-state': morningStateApi,
+    'creative-state': creativeStateApi,
+    'creative-block-log': creativeBlockRow ? rowToApi(creativeBlockRow) : freshStub('creative-block-log'),
+    'morning-block-log': morningBlockApi,
+    'midday-checkin': middayRow ? rowToApi(middayRow) : freshStub('midday-checkin'),
+    'work-sessions': {
+      date, sessions, totalSessions: 3,
+      completedSessions: sessions.filter((s) => s.endedAt).length,
+      lunchBreakLogged: false, lunchMeal: null, lunchNutritionScore: null
+    },
+    'votes': { date, votes: voteRows.map(rowToApi) },
+    'night-routine': nightRow ? nightRoutineRowToApi(nightRow) : freshStub('night-routine'),
+    'nutrition': {
+      date, meals, totalMeals: meals.length,
+      averageScore: scored.length > 0
+        ? Math.round((scored.reduce((s, m) => s + m.nutritionScore, 0) / scored.length) * 10) / 10
+        : null
+    },
+    'dopamine': {
+      date,
+      farming: {
+        sessions: farming,
+        totalPoints: farming.reduce((s, f) => s + (f.points || 0), 0),
+        totalMinutes: farming.reduce((s, f) => s + (f.durationMinutes || 0), 0)
+      },
+      overstimulation: { events: overstim, totalEvents: overstim.length },
+      screenTime: {
+        totalMinutes: daily?.screen_minutes ?? null, pickups: daily?.screen_pickups ?? null,
+        topApps: parseJsonField(daily?.screen_top_apps, []), capturedAt: daily?.screen_captured_at ?? null
+      },
+      netScore: daily?.net_score ?? 5
+    },
+    'episode': episodeApi,
+    'key-decisions': { date, decisions, totalMultipliedWeight: decisions.reduce((s, d) => s + (d.multiplier || 0), 0) },
+    'vf-game': { date, sessions: vfSessions },
+    'badge-daily': {
+      date, exercises: badgeExercises, missionsAttempted: badgeMissionAttempts,
+      xpGained: (() => {
+        const xp = {}
+        for (const ex of badgeExercises) xp[ex.badgeSlug] = (xp[ex.badgeSlug] || 0) + (ex.xpGained || 0)
+        for (const ma of badgeMissionAttempts) xp[ma.badgeSlug] = (xp[ma.badgeSlug] || 0) + (ma.xpGained || 0)
+        return xp
+      })()
     }
-  }
-  res.json(result)
+  })
 })
 
 app.get('/history/:date/:file', (req, res) => {
   const { date, file } = req.params
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return res.status(400).json({ error: 'Invalid date' })
-  if (!DAILY_FILES.includes(file)) return res.status(400).json({ error: 'Unknown file' })
-  try {
-    res.json(JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, date, `${file}.json`), 'utf8')))
-  } catch {
-    res.json(freshStub(file))
+  // Redirect to the full history endpoint and extract the file
+  // For simplicity, just construct a mini response
+  const uid = req.userId
+
+  const handlers = {
+    'sleep-data': () => {
+      const row = db.sleepData.get.get(uid, date)
+      if (!row) return freshStub('sleep-data')
+      const api = rowToApi(row)
+      api.rawExtracted = parseJsonField(api.rawExtracted, {})
+      return api
+    },
+    'morning-state': () => {
+      const row = db.morningState.get.get(uid, date)
+      if (!row) return freshStub('morning-state')
+      const api = rowToApi(row)
+      api.insights = parseJsonField(api.insights, [])
+      return api
+    },
+    'votes': () => {
+      const rows = db.votes.getByDate.all(uid, date)
+      return { date, votes: rows.map(rowToApi) }
+    },
+    'episode': () => {
+      const row = db.episodes.get.get(uid, date)
+      if (!row) return freshStub('episode')
+      const api = rowToApi(row)
+      api.plotPoints = db.plotPoints.getByDate.all(uid, date).map(rowToApi)
+      return api
+    }
   }
+
+  if (handlers[file]) {
+    return res.json(handlers[file]())
+  }
+  // Fallback: return stub
+  if (STUBS[file]) return res.json(freshStub(file))
+  return res.status(400).json({ error: 'Unknown file' })
 })
 
-// ─── POST /morning-block-log ──────────────────────────────────────────────────
+// ─── POST /morning-block-log ─────────────────────────────────────────────────
 
 app.post('/morning-block-log', (req, res) => {
   const { itemId, status, timestamp } = req.body
   if (!itemId || !status) return res.status(400).json({ error: 'itemId and status required' })
   const today = todayStr()
-  let data = resetForNewDay('morning-block-log', today)
-  data.date = today
-  if (!data.startedAt) data.startedAt = nowIso()
+  const uid = req.userId
 
-  const idx = data.items.findIndex((i) => i.id === itemId)
-  const item = { id: itemId, status, timestamp: timestamp || nowIso() }
-  if (idx >= 0) data.items[idx] = item
-  else data.items.push(item)
+  // Ensure parent log exists
+  db.morningBlockLog.upsert.run({
+    user_id: uid, date: today,
+    started_at: nowIso(), completed_at: null
+  })
 
-  data.completedCount = data.items.filter((i) => i.status === 'done').length
-  data.skippedCount = data.items.filter((i) => i.status === 'skipped').length
+  // Upsert item
+  db.morningBlockItems.upsert.run({
+    id: itemId, user_id: uid, date: today,
+    status, timestamp: timestamp || nowIso()
+  })
 
-  writeJson('morning-block-log', data)
   res.json({ ok: true })
 })
 
-// ─── POST /creative-block-log ─────────────────────────────────────────────────
+// ─── POST /creative-block-log ────────────────────────────────────────────────
 
 const CREATIVE_BLOCK_FIELDS = ['status', 'startedAt', 'completedAt']
 
 app.post('/creative-block-log', (req, res) => {
   const today = todayStr()
-  let data = resetForNewDay('creative-block-log', today)
-  data.date = today
   const allowed = pick(req.body, CREATIVE_BLOCK_FIELDS)
-  Object.assign(data, allowed)
-  writeJson('creative-block-log', data)
+
+  db.creativeBlockLog.upsert.run({
+    user_id: req.userId, date: today,
+    started_at: allowed.startedAt || null,
+    completed_at: allowed.completedAt || null,
+    status: allowed.status || 'not_started'
+  })
   res.json({ ok: true })
 })
 
-// ─── POST /sleep-data (Pulse) ─────────────────────────────────────────────────
+// ─── POST /sleep-data ────────────────────────────────────────────────────────
 
 const SLEEP_DATA_FIELDS = ['source', 'hoursSlept', 'quality', 'sleepScore', 'wakeUpMood', 'notes', 'rawExtracted', 'createdAt']
 
 app.post('/sleep-data', (req, res) => {
   const today = todayStr()
-  let data = resetForNewDay('sleep-data', today)
-  data.date = today
   const allowed = pick(req.body, SLEEP_DATA_FIELDS)
-  Object.assign(data, allowed)
-  if (!data.createdAt) data.createdAt = nowIso()
-  writeJson('sleep-data', data)
+
+  db.sleepData.upsert.run({
+    user_id: req.userId, date: today,
+    created_at: allowed.createdAt || nowIso(),
+    source: allowed.source || null,
+    hours_slept: allowed.hoursSlept ?? null,
+    quality: allowed.quality || null,
+    sleep_score: allowed.sleepScore ?? null,
+    wake_up_mood: allowed.wakeUpMood || null,
+    notes: allowed.notes || null,
+    raw_extracted: allowed.rawExtracted ? JSON.stringify(allowed.rawExtracted) : null
+  })
   res.json({ ok: true })
 })
 
-// ─── POST /fitmind-data (Pulse) ───────────────────────────────────────────────
+// ─── POST /fitmind-data ──────────────────────────────────────────────────────
 
 const FITMIND_DATA_FIELDS = ['source', 'workoutCompleted', 'duration', 'type', 'score', 'notes', 'createdAt']
 
 app.post('/fitmind-data', (req, res) => {
   const today = todayStr()
-  let data = resetForNewDay('fitmind-data', today)
-  data.date = today
   const allowed = pick(req.body, FITMIND_DATA_FIELDS)
-  Object.assign(data, allowed)
-  if (!data.createdAt) data.createdAt = nowIso()
-  writeJson('fitmind-data', data)
+
+  db.fitmindData.upsert.run({
+    user_id: req.userId, date: today,
+    created_at: allowed.createdAt || nowIso(),
+    source: allowed.source || null,
+    workout_completed: allowed.workoutCompleted != null ? (allowed.workoutCompleted ? 1 : 0) : null,
+    duration: allowed.duration ?? null,
+    type: allowed.type || null,
+    score: allowed.score ?? null,
+    notes: allowed.notes || null
+  })
   res.json({ ok: true })
 })
 
-// ─── POST /morning-state (Dawn) ──────────────────────────────────────────────
+// ─── POST /morning-state ─────────────────────────────────────────────────────
 
 const MORNING_STATE_FIELDS = ['energyScore', 'mentalClarity', 'emotionalState', 'insights',
   'dayPriority', 'resistanceNoted', 'resistanceDescription', 'overallMorningScore', 'rawNotes',
@@ -492,17 +739,26 @@ const MORNING_STATE_FIELDS = ['energyScore', 'mentalClarity', 'emotionalState', 
 
 app.post('/morning-state', (req, res) => {
   const today = todayStr()
-  let data = resetForNewDay('morning-state', today)
-  data.date = today
   const allowed = pick(req.body, MORNING_STATE_FIELDS)
-  Object.assign(data, allowed)
-  if (!data.createdAt) data.createdAt = nowIso()
-  data.updatedAt = nowIso()
-  writeJson('morning-state', data)
+
+  db.morningState.upsert.run({
+    user_id: req.userId, date: today,
+    created_at: allowed.createdAt || nowIso(),
+    updated_at: nowIso(),
+    energy_score: allowed.energyScore ?? null,
+    mental_clarity: allowed.mentalClarity ?? null,
+    emotional_state: allowed.emotionalState || null,
+    insights: allowed.insights ? JSON.stringify(allowed.insights) : null,
+    day_priority: allowed.dayPriority || null,
+    resistance_noted: allowed.resistanceNoted != null ? (allowed.resistanceNoted ? 1 : 0) : null,
+    resistance_description: allowed.resistanceDescription || null,
+    overall_morning_score: allowed.overallMorningScore ?? null,
+    raw_notes: allowed.rawNotes || null
+  })
   res.json({ ok: true })
 })
 
-// ─── POST /creative-state (Muse) ─────────────────────────────────────────────
+// ─── POST /creative-state ────────────────────────────────────────────────────
 
 const CREATIVE_STATE_FIELDS = ['activities', 'energyScore', 'creativeOutput', 'insights',
   'nutrition', 'nutritionScore', 'dopamineQuality', 'moodShift', 'rawNotes',
@@ -510,73 +766,78 @@ const CREATIVE_STATE_FIELDS = ['activities', 'energyScore', 'creativeOutput', 'i
 
 app.post('/creative-state', (req, res) => {
   const today = todayStr()
-  let data = resetForNewDay('creative-state', today)
-  data.date = today
   const allowed = pick(req.body, CREATIVE_STATE_FIELDS)
-  Object.assign(data, allowed)
-  if (!data.createdAt) data.createdAt = nowIso()
-  data.updatedAt = nowIso()
-  writeJson('creative-state', data)
+
+  db.creativeState.upsert.run({
+    user_id: req.userId, date: today,
+    created_at: allowed.createdAt || nowIso(),
+    updated_at: nowIso(),
+    activities: allowed.activities ? JSON.stringify(allowed.activities) : null,
+    energy_score: allowed.energyScore ?? null,
+    creative_output: allowed.creativeOutput || null,
+    insights: allowed.insights ? JSON.stringify(allowed.insights) : null,
+    nutrition: allowed.nutrition ? JSON.stringify(allowed.nutrition) : null,
+    nutrition_score: allowed.nutritionScore ?? null,
+    dopamine_quality: allowed.dopamineQuality || null,
+    mood_shift: allowed.moodShift || null,
+    raw_notes: allowed.rawNotes || null
+  })
   res.json({ ok: true })
 })
 
-// ─── POST /work-sessions/start ────────────────────────────────────────────────
+// ─── POST /work-sessions/start ───────────────────────────────────────────────
 
 app.post('/work-sessions/start', (req, res) => {
   const { sessionId, focus, evaluationCriteria } = req.body
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' })
   const today = todayStr()
-  let data = resetForNewDay('work-sessions', today)
-  data.date = today
 
-  const existing = data.sessions.find((s) => s.id === sessionId)
-  if (existing) {
-    existing.startedAt = nowIso()
-    existing.focus = focus || existing.focus
-    existing.evaluationCriteria = evaluationCriteria || existing.evaluationCriteria
-  } else {
-    data.sessions.push({
-      id: sessionId, startedAt: nowIso(), endedAt: null,
-      durationMinutes: 90, focus: focus || '', evaluationCriteria: evaluationCriteria || '',
-      outcomes: null, outcomeScore: null, flowScore: null, compositeScore: null,
-      meal: null, nutritionScore: null, notes: ''
-    })
-  }
+  db.workSessions.insert.run({
+    id: String(sessionId), user_id: req.userId, date: today,
+    started_at: nowIso(), ended_at: null,
+    duration_minutes: 90, focus: focus || '', evaluation_criteria: evaluationCriteria || '',
+    outcomes: null, outcome_score: null, flow_score: null, composite_score: null,
+    meal: null, nutrition_score: null, notes: ''
+  })
 
-  writeJson('work-sessions', data)
   res.json({ ok: true })
 })
 
-// ─── POST /work-sessions/end ──────────────────────────────────────────────────
+// ─── POST /work-sessions/end ─────────────────────────────────────────────────
 
 app.post('/work-sessions/end', (req, res) => {
   const { sessionId, outcomes, outcomeScore, flowScore, compositeScore, meal, nutritionScore, notes } = req.body
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' })
-  const today = todayStr()
-  let data = resetForNewDay('work-sessions', today)
-  data.date = today
 
-  let session = data.sessions.find((s) => s.id === sessionId)
-  if (!session) {
-    session = { id: sessionId, startedAt: null, durationMinutes: 90, focus: '', evaluationCriteria: '' }
-    data.sessions.push(session)
+  const existing = db.workSessions.get.get(String(sessionId), req.userId)
+  if (!existing) {
+    // Create a session if it doesn't exist (backwards compat)
+    db.workSessions.insert.run({
+      id: String(sessionId), user_id: req.userId, date: todayStr(),
+      started_at: null, ended_at: nowIso(),
+      duration_minutes: 90, focus: '', evaluation_criteria: '',
+      outcomes: outcomes || null, outcome_score: outcomeScore ?? null,
+      flow_score: flowScore ?? null, composite_score: compositeScore ?? null,
+      meal: meal || null, nutrition_score: nutritionScore ?? null, notes: notes || ''
+    })
+  } else {
+    db.workSessions.end.run({
+      id: String(sessionId), user_id: req.userId,
+      ended_at: nowIso(),
+      outcomes: outcomes !== undefined ? outcomes : existing.outcomes,
+      outcome_score: outcomeScore !== undefined ? outcomeScore : existing.outcome_score,
+      flow_score: flowScore !== undefined ? flowScore : existing.flow_score,
+      composite_score: compositeScore !== undefined ? compositeScore : existing.composite_score,
+      meal: meal !== undefined ? meal : existing.meal,
+      nutrition_score: nutritionScore !== undefined ? nutritionScore : existing.nutrition_score,
+      notes: notes !== undefined ? notes : existing.notes
+    })
   }
 
-  session.endedAt = nowIso()
-  if (outcomes !== undefined) session.outcomes = outcomes
-  if (outcomeScore !== undefined) session.outcomeScore = outcomeScore
-  if (flowScore !== undefined) session.flowScore = flowScore
-  if (compositeScore !== undefined) session.compositeScore = compositeScore
-  if (meal !== undefined) session.meal = meal
-  if (nutritionScore !== undefined) session.nutritionScore = nutritionScore
-  if (notes !== undefined) session.notes = notes
-
-  data.completedSessions = data.sessions.filter((s) => s.endedAt).length
-  writeJson('work-sessions', data)
   res.json({ ok: true })
 })
 
-// ─── POST /votes ──────────────────────────────────────────────────────────────
+// ─── POST /votes ─────────────────────────────────────────────────────────────
 
 const VALID_CATEGORIES = new Set(['nutrition', 'work', 'mental-power', 'personality', 'creativity', 'physical', 'relationships'])
 const VALID_POLARITIES = new Set(['positive', 'negative'])
@@ -586,17 +847,16 @@ app.post('/votes', (req, res) => {
   if (!Array.isArray(incoming)) return res.status(400).json({ error: 'votes array required' })
 
   const today = todayStr()
-  let data = resetForNewDay('votes', today)
-  data.date = today
-
   let added = 0
   for (const v of incoming) {
     if (!VALID_CATEGORIES.has(v.category)) continue
     if (!VALID_POLARITIES.has(v.polarity)) continue
     if (!v.action) continue
 
-    data.votes.push({
+    db.votes.insert.run({
       id: randomUUID(),
+      user_id: req.userId,
+      date: today,
       timestamp: v.timestamp || nowIso(),
       action: v.action,
       category: v.category,
@@ -607,32 +867,32 @@ app.post('/votes', (req, res) => {
     added++
   }
 
-  writeJson('votes', data)
   res.json({ ok: true, added })
 })
 
-// ─── POST /events ─────────────────────────────────────────────────────────────
+// ─── POST /events ────────────────────────────────────────────────────────────
 
 app.post('/events', (req, res) => {
   const { events } = req.body
   if (!Array.isArray(events)) return res.status(400).json({ error: 'events array required' })
 
-  const eventsPath = path.join(DATA_DIR, 'events.jsonl')
-  const lines = events
-    .filter((e) => e && typeof e === 'object')
-    .map((e) => {
-      if (!e.timestamp) e.timestamp = nowIso()
-      return JSON.stringify(e)
+  let added = 0
+  for (const e of events) {
+    if (!e || typeof e !== 'object') continue
+    db.events.insert.run({
+      user_id: req.userId,
+      timestamp: e.timestamp || nowIso(),
+      source: e.source || null,
+      type: e.type || null,
+      payload: JSON.stringify(e.payload || e)
     })
-
-  if (lines.length > 0) {
-    fs.appendFileSync(eventsPath, lines.join('\n') + '\n', 'utf8')
+    added++
   }
 
-  res.json({ ok: true, added: lines.length })
+  res.json({ ok: true, added })
 })
 
-// ─── POST /night-routine ──────────────────────────────────────────────────────
+// ─── POST /night-routine ─────────────────────────────────────────────────────
 
 const NIGHT_ROUTINE_PHASES = {
   windDown: ['lettingGoCompleted', 'lettingGoTimestamp', 'nervousSystemCompleted', 'nervousSystemTimestamp', 'bodyScanCompleted', 'bodyScanTimestamp'],
@@ -643,68 +903,181 @@ const NIGHT_ROUTINE_PHASES = {
 
 app.post('/night-routine', (req, res) => {
   const today = todayStr()
-  let data = resetForNewDay('night-routine', today)
-  data.date = today
-  data = migrateNightRoutine(data)
-  if (!data.startedAt) data.startedAt = nowIso()
+  const uid = req.userId
+
+  // Read existing to merge
+  const existing = db.nightRoutine.get.get(uid, today)
+
+  // Start from existing or defaults
+  const current = existing ? {
+    started_at: existing.started_at,
+    completed_at: existing.completed_at,
+    letting_go_completed: existing.letting_go_completed,
+    letting_go_timestamp: existing.letting_go_timestamp,
+    nervous_system_completed: existing.nervous_system_completed,
+    nervous_system_timestamp: existing.nervous_system_timestamp,
+    body_scan_completed: existing.body_scan_completed,
+    body_scan_timestamp: existing.body_scan_timestamp,
+    alter_memories_completed: existing.alter_memories_completed,
+    alter_memories_timestamp: existing.alter_memories_timestamp,
+    day_review_completed: existing.day_review_completed,
+    day_review_timestamp: existing.day_review_timestamp,
+    plan_completed: existing.plan_completed,
+    plan_timestamp: existing.plan_timestamp,
+    plan_text: existing.plan_text,
+    plan_finalized: existing.plan_finalized,
+    plan_finalized_timestamp: existing.plan_finalized_timestamp,
+    prompts_reviewed: existing.prompts_reviewed,
+    prompts_timestamp: existing.prompts_timestamp,
+    vf_game_completed: existing.vf_game_completed,
+    visualization_completed: existing.visualization_completed,
+    lights_out: existing.lights_out,
+    lights_out_timestamp: existing.lights_out_timestamp
+  } : {
+    started_at: null, completed_at: null,
+    letting_go_completed: 0, letting_go_timestamp: null,
+    nervous_system_completed: 0, nervous_system_timestamp: null,
+    body_scan_completed: 0, body_scan_timestamp: null,
+    alter_memories_completed: 0, alter_memories_timestamp: null,
+    day_review_completed: 0, day_review_timestamp: null,
+    plan_completed: 0, plan_timestamp: null, plan_text: null,
+    plan_finalized: 0, plan_finalized_timestamp: null,
+    prompts_reviewed: 0, prompts_timestamp: null,
+    vf_game_completed: 0, visualization_completed: 0,
+    lights_out: 0, lights_out_timestamp: null
+  }
+
+  if (!current.started_at) current.started_at = nowIso()
+
+  // Map camelCase field names to snake_case DB columns
+  const fieldMap = {
+    lettingGoCompleted: 'letting_go_completed',
+    lettingGoTimestamp: 'letting_go_timestamp',
+    nervousSystemCompleted: 'nervous_system_completed',
+    nervousSystemTimestamp: 'nervous_system_timestamp',
+    bodyScanCompleted: 'body_scan_completed',
+    bodyScanTimestamp: 'body_scan_timestamp',
+    alterMemoriesCompleted: 'alter_memories_completed',
+    alterMemoriesTimestamp: 'alter_memories_timestamp',
+    dayReviewCompleted: 'day_review_completed',
+    dayReviewTimestamp: 'day_review_timestamp',
+    planCompleted: 'plan_completed',
+    planTimestamp: 'plan_timestamp',
+    planText: 'plan_text',
+    planFinalized: 'plan_finalized',
+    planFinalizedTimestamp: 'plan_finalized_timestamp',
+    promptsReviewed: 'prompts_reviewed',
+    promptsTimestamp: 'prompts_timestamp',
+    vfGameCompleted: 'vf_game_completed',
+    visualizationCompleted: 'visualization_completed',
+    lightsOut: 'lights_out',
+    lightsOutTimestamp: 'lights_out_timestamp'
+  }
 
   const { phase, ...fields } = req.body
 
-  if (phase && NIGHT_ROUTINE_PHASES[phase]) {
-    // Update specific phase
-    const allowed = pick(fields, NIGHT_ROUTINE_PHASES[phase])
-    Object.assign(data[phase], allowed)
-  } else {
-    // Bulk update — try to match fields to phases
-    for (const [phaseName, phaseFields] of Object.entries(NIGHT_ROUTINE_PHASES)) {
-      const allowed = pick(req.body, phaseFields)
-      if (Object.keys(allowed).length > 0) {
-        Object.assign(data[phaseName], allowed)
+  const applyFields = (src) => {
+    for (const [camelKey, val] of Object.entries(src)) {
+      const snakeKey = fieldMap[camelKey]
+      if (snakeKey && val !== undefined) {
+        // Convert booleans to integers for SQLite
+        current[snakeKey] = typeof val === 'boolean' ? (val ? 1 : 0) : val
       }
     }
   }
 
-  // Check completion
-  const allWindDown = data.windDown.lettingGoCompleted && data.windDown.nervousSystemCompleted
-  const allPlanning = data.planning.planCompleted
-  const allBed = data.bed.lightsOut
-  if (allWindDown && allPlanning && allBed) {
-    data.completedAt = data.completedAt || nowIso()
+  if (phase && NIGHT_ROUTINE_PHASES[phase]) {
+    const allowed = pick(fields, NIGHT_ROUTINE_PHASES[phase])
+    applyFields(allowed)
+  } else {
+    for (const [, phaseFields] of Object.entries(NIGHT_ROUTINE_PHASES)) {
+      const allowed = pick(req.body, phaseFields)
+      applyFields(allowed)
+    }
   }
 
-  writeJson('night-routine', data)
+  // Check completion
+  if (current.letting_go_completed && current.nervous_system_completed &&
+      current.plan_completed && current.lights_out) {
+    if (!current.completed_at) current.completed_at = nowIso()
+  }
+
+  db.nightRoutine.upsert.run({
+    user_id: uid, date: today, ...current
+  })
+
   res.json({ ok: true })
 })
 
-// ─── POST /midday-checkin ─────────────────────────────────────────────────────
+// ─── POST /midday-checkin ────────────────────────────────────────────────────
 
 const MIDDAY_CHECKIN_FIELDS = ['energyScore', 'notes', 'rawNotes']
 
 app.post('/midday-checkin', (req, res) => {
   const today = todayStr()
-  let data = resetForNewDay('midday-checkin', today)
-  data.date = today
-  data.triggeredAt = data.triggeredAt || nowIso()
   const allowed = pick(req.body, MIDDAY_CHECKIN_FIELDS)
-  Object.assign(data, allowed)
-  writeJson('midday-checkin', data)
+
+  db.middayCheckin.upsert.run({
+    user_id: req.userId, date: today,
+    triggered_at: nowIso(),
+    energy_score: allowed.energyScore ?? null,
+    notes: allowed.notes || null,
+    raw_notes: allowed.rawNotes || null
+  })
   res.json({ ok: true })
 })
 
-// ─── GET /badges (static reference) ───────────────────────────────────────────
+// ─── GET /badges (static reference) ─────────────────────────────────────────
 
 app.get('/badges', (req, res) => res.json(BADGES_DATA))
 app.get('/badges/missions', (req, res) => res.json(MISSIONS_DATA))
 
-// ─── GET /badge-progress (persistent) ─────────────────────────────────────────
+// ─── GET /badge-progress (persistent) ────────────────────────────────────────
 
-app.get('/badge-progress', (req, res) => res.json(readPersistent('badge-progress')))
+app.get('/badge-progress', (req, res) => {
+  const rows = db.badgeProgress.getAll.all(req.userId)
+  const badges = {}
+  for (const row of rows) {
+    badges[row.badge_slug] = {
+      tier: row.tier, tierName: row.tier_name, xp: row.xp,
+      exercisesCompleted: row.exercises_completed, missionsCompleted: row.missions_completed,
+      missionsFailed: row.missions_failed, bossEncounters: row.boss_encounters,
+      currentStreak: row.current_streak, longestStreak: row.longest_streak,
+      lastActivityDate: row.last_activity_date
+    }
+  }
+  // Ensure all badges exist
+  for (const b of BADGES_DATA.badges) {
+    if (!badges[b.slug]) {
+      badges[b.slug] = {
+        tier: 1, tierName: 'Initiate', xp: 0,
+        exercisesCompleted: 0, missionsCompleted: 0, missionsFailed: 0,
+        bossEncounters: 0, currentStreak: 0, longestStreak: 0, lastActivityDate: null
+      }
+    }
+  }
+  res.json({ lastUpdated: rows.length > 0 ? rows[0].last_updated : null, badges })
+})
 
-// ─── GET /badge-missions (persistent) ─────────────────────────────────────────
+// ─── GET /badge-missions (persistent) ────────────────────────────────────────
 
-app.get('/badge-missions', (req, res) => res.json(readPersistent('badge-missions')))
+app.get('/badge-missions', (req, res) => {
+  const active = db.badgeMissionsActive.getAll.all(req.userId).map((m) => ({
+    missionId: m.mission_id, badgeSlug: m.badge_slug,
+    title: m.title, description: m.description, successCriteria: m.success_criteria,
+    rewardXp: m.reward_xp, failXp: m.fail_xp, minTier: m.min_tier,
+    assignedAt: m.assigned_at, status: m.status, completedAt: null, xpAwarded: 0
+  }))
+  const completed = db.badgeMissionsCompleted.getAll.all(req.userId).map((m) => ({
+    missionId: m.mission_id, badgeSlug: m.badge_slug,
+    title: m.title, status: m.status, assignedAt: m.assigned_at,
+    completedAt: m.completed_at, xpAwarded: m.xp_awarded, notes: m.notes
+  }))
+  const meta = db.meta.get.get(req.userId, 'missions_last_assigned')
+  res.json({ lastAssigned: meta?.value || null, active, completed })
+})
 
-// ─── POST /badge-progress/exercise ────────────────────────────────────────────
+// ─── POST /badge-progress/exercise ───────────────────────────────────────────
 
 app.post('/badge-progress/exercise', (req, res) => {
   const { badgeSlug, exerciseId } = req.body
@@ -716,167 +1089,209 @@ app.post('/badge-progress/exercise', (req, res) => {
   if (!exercise) return res.status(400).json({ error: 'Unknown exercise' })
 
   const today = todayStr()
-  const progress = readPersistent('badge-progress')
+  const uid = req.userId
 
-  // Ensure badge exists in progress
-  if (!progress.badges[badgeSlug]) {
-    progress.badges[badgeSlug] = structuredClone(PERSISTENT_STUBS['badge-progress'].badges[badgeSlug])
+  // Get or init badge progress
+  let progress = db.badgeProgress.get.get(uid, badgeSlug)
+  if (!progress) {
+    progress = {
+      user_id: uid, badge_slug: badgeSlug,
+      tier: 1, tier_name: 'Initiate', xp: 0,
+      exercises_completed: 0, missions_completed: 0, missions_failed: 0,
+      boss_encounters: 0, current_streak: 0, longest_streak: 0,
+      last_activity_date: null, last_updated: null
+    }
   }
 
   // Update streak
-  updateStreak(progress, badgeSlug, today)
+  const yesterday = new Date()
+  yesterday.setDate(yesterday.getDate() - 1)
+  const yesterdayStr = yesterday.toISOString().slice(0, 10)
+
+  if (progress.last_activity_date !== today) {
+    if (progress.last_activity_date === yesterdayStr) {
+      progress.current_streak += 1
+    } else {
+      progress.current_streak = 1
+    }
+    if (progress.current_streak > progress.longest_streak) {
+      progress.longest_streak = progress.current_streak
+    }
+    progress.last_activity_date = today
+  }
 
   // Apply XP
-  const xpGained = applyXp(progress, badgeSlug, exercise.xp)
-  progress.badges[badgeSlug].exercisesCompleted += 1
-  writePersistent('badge-progress', progress)
+  const mult = getStreakMultiplier(progress.current_streak)
+  const xpGained = Math.round(exercise.xp * mult)
+  progress.xp = Math.max(0, progress.xp + xpGained)
+  const tier = getTierForXp(progress.xp)
+  progress.tier = tier.level
+  progress.tier_name = tier.name
+  progress.exercises_completed += 1
+  progress.last_updated = nowIso()
 
-  // Log to badge-daily
-  let daily = resetForNewDay('badge-daily', today)
-  daily.date = today
-  daily.exercises.push({
-    badgeSlug, exerciseId,
-    timestamp: nowIso(),
-    xpGained
-  })
-  if (!daily.xpGained[badgeSlug]) daily.xpGained[badgeSlug] = 0
-  daily.xpGained[badgeSlug] += xpGained
-  writeJson('badge-daily', daily)
+  db.transactions.exerciseBadge(
+    { ...progress, user_id: uid, badge_slug: badgeSlug },
+    {
+      user_id: uid, date: today, badge_slug: badgeSlug,
+      exercise_id: exerciseId, timestamp: nowIso(), xp_gained: xpGained
+    }
+  )
 
   res.json({
     ok: true, xpGained,
-    totalXp: progress.badges[badgeSlug].xp,
-    tier: progress.badges[badgeSlug].tier,
-    tierName: progress.badges[badgeSlug].tierName,
-    streak: progress.badges[badgeSlug].currentStreak
+    totalXp: progress.xp,
+    tier: progress.tier,
+    tierName: progress.tier_name,
+    streak: progress.current_streak
   })
 })
 
-// ─── POST /badge-missions/assign ──────────────────────────────────────────────
+// ─── POST /badge-missions/assign ─────────────────────────────────────────────
 
 app.post('/badge-missions/assign', (req, res) => {
-  const { badgeSlugs } = req.body // optional: assign for specific badges, default all
+  const { badgeSlugs } = req.body
   const today = todayStr()
-  const progress = readPersistent('badge-progress')
-  const missions = readPersistent('badge-missions')
+  const uid = req.userId
 
   // Don't re-assign if already assigned today
-  if (missions.lastAssigned === today) {
-    return res.json({ ok: true, message: 'Already assigned today', active: missions.active })
+  const lastAssigned = db.meta.get.get(uid, 'missions_last_assigned')
+  if (lastAssigned?.value === today) {
+    const active = db.badgeMissionsActive.getAll.all(uid).map((m) => ({
+      missionId: m.mission_id, badgeSlug: m.badge_slug,
+      title: m.title, description: m.description, successCriteria: m.success_criteria,
+      rewardXp: m.reward_xp, failXp: m.fail_xp, minTier: m.min_tier,
+      assignedAt: m.assigned_at, status: m.status
+    }))
+    return res.json({ ok: true, message: 'Already assigned today', active })
   }
-
-  // Move yesterday's pending missions to completed as expired
-  for (const m of missions.active) {
-    if (m.status === 'pending') {
-      m.status = 'expired'
-      m.completedAt = nowIso()
-      missions.completed.push(m)
-    }
-  }
-  missions.active = []
 
   const slugs = badgeSlugs || BADGES_DATA.badges.map((b) => b.slug)
+  const newMissions = []
 
   for (const slug of slugs) {
-    const badgeProgress = progress.badges[slug]
-    if (!badgeProgress) continue
-    const tier = badgeProgress.tier
+    const badgeProgress = db.badgeProgress.get.get(uid, slug)
+    const tier = badgeProgress?.tier || 1
 
-    // Get eligible missions (minTier <= current tier)
     const eligible = MISSIONS_DATA.missions.filter((m) =>
       m.badgeSlug === slug && m.minTier <= tier
     )
     if (eligible.length === 0) continue
 
-    // Pick one random mission
     const mission = eligible[Math.floor(Math.random() * eligible.length)]
-    missions.active.push({
-      missionId: mission.id,
-      badgeSlug: slug,
-      title: mission.title,
-      description: mission.description,
-      successCriteria: mission.successCriteria,
-      rewardXp: mission.rewardXp,
-      failXp: mission.failXp,
-      minTier: mission.minTier,
-      assignedAt: nowIso(),
-      status: 'pending',
-      completedAt: null,
-      xpAwarded: 0
+    newMissions.push({
+      user_id: uid, mission_id: mission.id, badge_slug: slug,
+      title: mission.title, description: mission.description,
+      success_criteria: mission.successCriteria, reward_xp: mission.rewardXp,
+      fail_xp: mission.failXp, min_tier: mission.minTier,
+      assigned_at: nowIso(), status: 'pending'
     })
   }
 
-  missions.lastAssigned = today
-  writePersistent('badge-missions', missions)
+  db.transactions.assignMissions(uid, nowIso(), null, newMissions)
 
-  // Trim completed history (keep last 500)
-  if (missions.completed.length > 500) {
-    missions.completed = missions.completed.slice(-500)
-    writePersistent('badge-missions', missions)
-  }
+  const active = newMissions.map((m) => ({
+    missionId: m.mission_id, badgeSlug: m.badge_slug,
+    title: m.title, description: m.description, successCriteria: m.success_criteria,
+    rewardXp: m.reward_xp, failXp: m.fail_xp, minTier: m.min_tier,
+    assignedAt: m.assigned_at, status: m.status
+  }))
 
-  res.json({ ok: true, active: missions.active })
+  res.json({ ok: true, active })
 })
 
-// ─── POST /badge-missions/complete ────────────────────────────────────────────
+// ─── POST /badge-missions/complete ───────────────────────────────────────────
 
 app.post('/badge-missions/complete', (req, res) => {
   const { missionId, success, notes } = req.body
   if (!missionId || success === undefined) return res.status(400).json({ error: 'missionId and success required' })
 
   const today = todayStr()
-  const missions = readPersistent('badge-missions')
-  const idx = missions.active.findIndex((m) => m.missionId === missionId && m.status === 'pending')
-  if (idx === -1) return res.status(400).json({ error: 'Mission not found or already completed' })
+  const uid = req.userId
 
-  const mission = missions.active[idx]
-  const progress = readPersistent('badge-progress')
+  const mission = db.badgeMissionsActive.get.get(uid, missionId, 'pending')
+  if (!mission) return res.status(400).json({ error: 'Mission not found or already completed' })
+
+  // Get badge progress
+  let progress = db.badgeProgress.get.get(uid, mission.badge_slug)
+  if (!progress) {
+    progress = {
+      user_id: uid, badge_slug: mission.badge_slug,
+      tier: 1, tier_name: 'Initiate', xp: 0,
+      exercises_completed: 0, missions_completed: 0, missions_failed: 0,
+      boss_encounters: 0, current_streak: 0, longest_streak: 0,
+      last_activity_date: null, last_updated: null
+    }
+  }
 
   // Update streak
-  updateStreak(progress, mission.badgeSlug, today)
+  const yesterday = new Date()
+  yesterday.setDate(yesterday.getDate() - 1)
+  const yesterdayStr = yesterday.toISOString().slice(0, 10)
 
-  const rawXp = success ? mission.rewardXp : mission.failXp
-  const xpGained = applyXp(progress, mission.badgeSlug, rawXp)
+  if (progress.last_activity_date !== today) {
+    if (progress.last_activity_date === yesterdayStr) {
+      progress.current_streak += 1
+    } else {
+      progress.current_streak = 1
+    }
+    if (progress.current_streak > progress.longest_streak) {
+      progress.longest_streak = progress.current_streak
+    }
+    progress.last_activity_date = today
+  }
+
+  // Apply XP
+  const rawXp = success ? mission.reward_xp : mission.fail_xp
+  const mult = getStreakMultiplier(progress.current_streak)
+  const xpGained = Math.round(rawXp * mult)
+  progress.xp = Math.max(0, progress.xp + xpGained)
+  const tier = getTierForXp(progress.xp)
+  progress.tier = tier.level
+  progress.tier_name = tier.name
 
   if (success) {
-    progress.badges[mission.badgeSlug].missionsCompleted += 1
+    progress.missions_completed += 1
   } else {
-    progress.badges[mission.badgeSlug].missionsFailed += 1
+    progress.missions_failed += 1
   }
-  writePersistent('badge-progress', progress)
+  progress.last_updated = nowIso()
 
-  mission.status = success ? 'completed' : 'failed'
-  mission.completedAt = nowIso()
-  mission.xpAwarded = xpGained
-  if (notes) mission.notes = notes
-  missions.completed.push(mission)
-  missions.active.splice(idx, 1)
-  writePersistent('badge-missions', missions)
+  const completedMission = {
+    mission_id: missionId,
+    badge_slug: mission.badge_slug,
+    title: mission.title,
+    status: success ? 'completed' : 'failed',
+    assigned_at: mission.assigned_at,
+    completed_at: nowIso(),
+    xp_awarded: xpGained,
+    notes: notes || null
+  }
 
-  // Log to badge-daily
-  let daily = resetForNewDay('badge-daily', today)
-  daily.date = today
-  daily.missionsAttempted.push({
-    missionId, badgeSlug: mission.badgeSlug,
-    success, xpGained, timestamp: nowIso()
-  })
-  if (!daily.xpGained[mission.badgeSlug]) daily.xpGained[mission.badgeSlug] = 0
-  daily.xpGained[mission.badgeSlug] += xpGained
-  writeJson('badge-daily', daily)
+  db.transactions.completeMission(
+    uid,
+    completedMission,
+    { ...progress, user_id: uid, badge_slug: mission.badge_slug },
+    {
+      user_id: uid, date: today, mission_id: missionId,
+      badge_slug: mission.badge_slug, success: success ? 1 : 0,
+      xp_gained: xpGained, timestamp: nowIso()
+    }
+  )
 
   res.json({
     ok: true, success, xpGained,
-    totalXp: progress.badges[mission.badgeSlug].xp,
-    tier: progress.badges[mission.badgeSlug].tier,
-    tierName: progress.badges[mission.badgeSlug].tierName
+    totalXp: progress.xp,
+    tier: progress.tier,
+    tierName: progress.tier_name
   })
 })
 
-// ─── GET /affirmations (static reference) ─────────────────────────────────────
+// ─── GET /affirmations (static reference) ────────────────────────────────────
 
 app.get('/affirmations', (req, res) => res.json(AFFIRMATIONS_DATA))
 
-// ─── POST /key-decisions ──────────────────────────────────────────────────────
+// ─── POST /key-decisions ─────────────────────────────────────────────────────
 
 const KEY_DECISION_TYPES = new Set(['resist', 'persist', 'reframe', 'ground', 'face-boss', 'recenter'])
 
@@ -886,223 +1301,148 @@ app.post('/key-decisions', (req, res) => {
   if (!KEY_DECISION_TYPES.has(type)) return res.status(400).json({ error: `type must be one of: ${[...KEY_DECISION_TYPES].join(', ')}` })
 
   const today = todayStr()
-  let data = resetForNewDay('key-decisions', today)
-  data.date = today
-
+  const uid = req.userId
   const mult = multiplier || (type === 'face-boss' ? 5 : type === 'resist' ? 3 : 2)
 
   const decision = {
-    id: randomUUID(),
-    timestamp: nowIso(),
-    description,
-    type,
-    multiplier: mult,
-    affirmationIndex: affirmationIndex ?? null,
-    notes: notes || ''
+    id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
+    description, type, multiplier: mult,
+    affirmation_index: affirmationIndex ?? null, notes: notes || ''
   }
 
-  data.decisions.push(decision)
-  data.totalMultipliedWeight += mult
-
-  // Generate multiplied vote
-  const votesToAppend = [{
-    action: description,
-    category: 'mental-power',
-    polarity: 'positive',
-    source: 'key-decision',
-    weight: mult
-  }]
-
-  let votesData = resetForNewDay('votes', today)
-  votesData.date = today
-  for (const v of votesToAppend) {
-    votesData.votes.push({
-      id: randomUUID(),
-      timestamp: nowIso(),
-      action: v.action,
-      category: v.category,
-      polarity: v.polarity,
-      source: v.source,
-      weight: v.weight
-    })
+  const vote = {
+    id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
+    action: description, category: 'mental-power', polarity: 'positive',
+    source: 'key-decision', weight: mult
   }
-  writeJson('votes', votesData)
-
-  writeJson('key-decisions', data)
 
   // Auto plot-point for active episode
-  addAutoPlotPoint(description, 'key-decision')
+  const episode = db.episodes.get.get(uid, today)
+  let plotPoint = null
+  if (episode && episode.number) {
+    plotPoint = {
+      id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
+      description, type: 'key-decision'
+    }
+  }
+
+  db.transactions.logKeyDecision(uid, decision, vote, plotPoint)
+
+  // Re-read for response
+  const allDecisions = db.keyDecisions.getByDate.all(uid, today)
+  const totalMultipliedWeight = allDecisions.reduce((s, d) => s + d.multiplier, 0)
 
   res.json({
     ok: true,
-    decision,
-    totalDecisions: data.decisions.length,
-    totalMultipliedWeight: data.totalMultipliedWeight
+    decision: rowToApi(decision),
+    totalDecisions: allDecisions.length,
+    totalMultipliedWeight
   })
 })
 
-// ─── POST /vf-game ────────────────────────────────────────────────────────────
+// ─── POST /vf-game ───────────────────────────────────────────────────────────
 
 const VF_GAME_FIELDS = ['presenceScore', 'affirmations', 'bossEncountered', 'keyDecisionsLinked', 'closing', 'notes']
 
 app.post('/vf-game', (req, res) => {
   const today = todayStr()
-  let data = resetForNewDay('vf-game', today)
-  data.date = today
-
+  const uid = req.userId
   const allowed = pick(req.body, VF_GAME_FIELDS)
 
-  // Build session entry
+  const sessionId = randomUUID()
   const session = {
-    id: randomUUID(),
-    timestamp: nowIso(),
-    presenceScore: allowed.presenceScore ?? null,
-    bossEncountered: allowed.bossEncountered ?? null,
-    keyDecisionsLinked: allowed.keyDecisionsLinked || [],
-    closing: allowed.closing || '',
-    notes: allowed.notes || '',
-    affirmations: []
+    id: sessionId, user_id: uid, date: today, timestamp: nowIso(),
+    presence_score: allowed.presenceScore ?? null,
+    boss_encountered: allowed.bossEncountered ?? null,
+    key_decisions_linked: allowed.keyDecisionsLinked ? JSON.stringify(allowed.keyDecisionsLinked) : null,
+    closing: allowed.closing || '', notes: allowed.notes || ''
   }
 
-  // Process affirmations
-  if (allowed.affirmations && Array.isArray(allowed.affirmations)) {
-    const votesToAppend = []
+  const affirmationsToInsert = []
+  const votesToAdd = []
 
+  if (allowed.affirmations && Array.isArray(allowed.affirmations)) {
     for (const aff of allowed.affirmations) {
       if (aff.index === undefined) continue
 
-      session.affirmations.push({
-        index: aff.index,
-        convictionScore: aff.convictionScore ?? null,
-        resistanceScore: aff.resistanceScore ?? null,
+      affirmationsToInsert.push({
+        user_id: uid, session_id: sessionId,
+        affirmation_index: aff.index,
+        conviction_score: aff.convictionScore ?? null,
+        resistance_score: aff.resistanceScore ?? null,
         exploration: aff.exploration || '',
         resistance: aff.resistance || ''
       })
 
-      // Generate conviction votes
       if (aff.convictionScore !== undefined) {
         const affDef = AFFIRMATIONS_DATA.affirmations.find((a) => a.index === aff.index)
-
         if (aff.convictionScore >= 8) {
-          votesToAppend.push({
+          votesToAdd.push({
+            id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
             action: `High conviction: ${affDef?.text?.slice(0, 60) || 'affirmation ' + aff.index}`,
-            category: 'mental-power',
-            polarity: 'positive',
-            source: 'vf-game',
-            weight: 2
+            category: 'mental-power', polarity: 'positive', source: 'vf-game', weight: 2
           })
         } else if (aff.convictionScore <= 3) {
-          votesToAppend.push({
+          votesToAdd.push({
+            id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
             action: `Low conviction: ${affDef?.text?.slice(0, 60) || 'affirmation ' + aff.index}`,
-            category: 'mental-power',
-            polarity: 'negative',
-            source: 'vf-game',
-            weight: 1
+            category: 'mental-power', polarity: 'negative', source: 'vf-game', weight: 1
           })
         }
       }
 
-      // Generate resistance votes
       if (aff.resistanceScore !== undefined && aff.resistanceScore >= 8) {
         const affDef = AFFIRMATIONS_DATA.affirmations.find((a) => a.index === aff.index)
-        votesToAppend.push({
+        votesToAdd.push({
+          id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
           action: `High resistance: ${affDef?.text?.slice(0, 60) || 'affirmation ' + aff.index}`,
-          category: 'mental-power',
-          polarity: 'negative',
-          source: 'vf-game',
-          weight: 1
+          category: 'mental-power', polarity: 'negative', source: 'vf-game', weight: 1
         })
       }
-    }
-
-    // Append votes
-    if (votesToAppend.length > 0) {
-      let votesData = resetForNewDay('votes', today)
-      votesData.date = today
-      for (const v of votesToAppend) {
-        votesData.votes.push({
-          id: randomUUID(),
-          timestamp: nowIso(),
-          action: v.action,
-          category: v.category,
-          polarity: v.polarity,
-          source: v.source,
-          weight: v.weight
-        })
-      }
-      writeJson('votes', votesData)
     }
   }
 
-  // Append session (multiple per day)
-  data.sessions.push(session)
+  db.transactions.logVfSession(uid, session, affirmationsToInsert, votesToAdd)
 
-  writeJson('vf-game', data)
-  res.json({ ok: true, sessionId: session.id, sessionCount: data.sessions.length })
+  const sessionCount = db.vfSessions.getByDate.all(uid, today).length
+  res.json({ ok: true, sessionId, sessionCount })
 })
 
-// ─── GET /vf-score ────────────────────────────────────────────────────────────
+// ─── GET /vf-score ───────────────────────────────────────────────────────────
 
 app.get('/vf-score', (req, res) => {
   const today = todayStr()
-  const vfData = readJson('vf-game')
-  const kdData = readJson('key-decisions')
+  const uid = req.userId
 
-  // No sessions today
-  if (!vfData.sessions || vfData.sessions.length === 0) {
-    return res.json({
-      date: today,
-      score: null,
-      components: null,
-      message: 'No VF sessions today'
-    })
+  const sessions = db.vfSessions.getByDate.all(uid, today)
+  if (sessions.length === 0) {
+    return res.json({ date: today, score: null, components: null, message: 'No VF sessions today' })
   }
 
-  // Use the LATEST session for scoring
-  const latest = vfData.sessions[vfData.sessions.length - 1]
-  const affs = latest.affirmations || []
+  const latest = sessions[sessions.length - 1]
+  const affs = db.vfAffirmations.getBySession.all(latest.id)
 
-  // 1. Conviction average (0-10)
-  const convScores = affs.filter(a => a.convictionScore !== null).map(a => a.convictionScore)
+  const convScores = affs.filter((a) => a.conviction_score !== null).map((a) => a.conviction_score)
   const convAvg = convScores.length > 0 ? convScores.reduce((s, v) => s + v, 0) / convScores.length : 0
 
-  // 2. Resistance average INVERTED (0-10, lower resistance = higher score)
-  const resScores = affs.filter(a => a.resistanceScore !== null).map(a => a.resistanceScore)
+  const resScores = affs.filter((a) => a.resistance_score !== null).map((a) => a.resistance_score)
   const resAvg = resScores.length > 0 ? resScores.reduce((s, v) => s + v, 0) / resScores.length : 0
   const resInverted = 10 - resAvg
 
-  // 3. Key decisions contribution (capped at 10)
-  const kdWeight = kdData.totalMultipliedWeight || 0
-  const kdScore = Math.min(10, kdWeight / 3) // 30 total weight = max 10
+  const kdRows = db.keyDecisions.getByDate.all(uid, today)
+  const kdWeight = kdRows.reduce((s, d) => s + d.multiplier, 0)
+  const kdScore = Math.min(10, kdWeight / 3)
 
-  // 4. Boss encounters faced today
-  let bossScore = 0
-  try {
-    const raw = fs.readFileSync(path.join(DATA_DIR, 'boss-encounters.jsonl'), 'utf8')
-    const entries = raw.split('\n').filter(Boolean)
-      .map(l => { try { return JSON.parse(l) } catch { return null } })
-      .filter(e => e && e.timestamp && e.timestamp.startsWith(today) && e.faced)
-    bossScore = Math.min(10, entries.length * 3.33) // 3 faced bosses = max 10
-  } catch {}
+  const bossToday = db.bossEncounters.getTodayFaced.all(uid, today)
+  const bossScore = Math.min(10, bossToday.length * 3.33)
 
-  // 5. Presence score from latest session (0-10)
-  const presence = latest.presenceScore ?? 0
+  const presence = latest.presence_score ?? 0
 
-  // Composed score: weighted average
-  // Conviction 25%, Resistance(inv) 25%, Key Decisions 20%, Boss 15%, Presence 15%
-  const composed = (
-    convAvg * 0.25 +
-    resInverted * 0.25 +
-    kdScore * 0.20 +
-    bossScore * 0.15 +
-    presence * 0.15
-  )
-
+  const composed = convAvg * 0.25 + resInverted * 0.25 + kdScore * 0.20 + bossScore * 0.15 + presence * 0.15
   const score = Math.round(composed * 10) / 10
 
   res.json({
-    date: today,
-    score,
+    date: today, score,
     components: {
       conviction: { avg: Math.round(convAvg * 10) / 10, weight: '25%' },
       resistance: { avg: Math.round(resAvg * 10) / 10, inverted: Math.round(resInverted * 10) / 10, weight: '25%' },
@@ -1110,60 +1450,51 @@ app.get('/vf-score', (req, res) => {
       bossEncounters: { score: Math.round(bossScore * 10) / 10, weight: '15%' },
       presence: { score: presence, weight: '15%' }
     },
-    sessionCount: vfData.sessions.length,
+    sessionCount: sessions.length,
     latestSession: latest.timestamp
   })
 })
 
-// ─── VF Chapters ──────────────────────────────────────────────────────────────
+// ─── VF Chapters ─────────────────────────────────────────────────────────────
 
 app.get('/vf-chapters', (req, res) => {
-  try {
-    const raw = fs.readFileSync(path.join(DATA_DIR, 'vf-chapters.jsonl'), 'utf8')
-    const chapters = raw.split('\n').filter(Boolean)
-      .map(l => { try { return JSON.parse(l) } catch { return null } })
-      .filter(Boolean)
+  const chapters = db.vfChapters.getAll.all(req.userId).map((r) => ({
+    id: r.id, chapter: r.chapter, date: r.date, timestamp: r.timestamp,
+    title: r.title, narrative: r.narrative, vfScore: r.vf_score,
+    keyMoments: parseJsonField(r.key_moments, []),
+    bossesNamed: parseJsonField(r.bosses_named, []),
+    affirmationShifts: parseJsonField(r.affirmation_shifts, []),
+    mood: r.mood
+  }))
 
-    const { limit } = req.query
-    const result = limit ? chapters.slice(-parseInt(limit, 10)) : chapters
-
-    res.json(result)
-  } catch {
-    res.json([])
-  }
+  const { limit } = req.query
+  const result = limit ? chapters.slice(-parseInt(limit, 10)) : chapters
+  res.json(result)
 })
 
 app.post('/vf-chapters', (req, res) => {
   const { title, narrative, vfScore, keyMoments, bossesNamed, affirmationShifts, mood } = req.body
   if (!narrative) return res.status(400).json({ error: 'narrative required' })
 
-  // Count existing chapters
-  let chapterNumber = 1
-  try {
-    const raw = fs.readFileSync(path.join(DATA_DIR, 'vf-chapters.jsonl'), 'utf8')
-    chapterNumber = raw.split('\n').filter(Boolean).length + 1
-  } catch {}
+  const maxRow = db.vfChapters.maxNumber.get(req.userId)
+  const chapterNumber = (maxRow?.max_ch || 0) + 1
 
   const entry = {
-    id: randomUUID(),
-    chapter: chapterNumber,
-    date: todayStr(),
-    timestamp: nowIso(),
+    id: randomUUID(), user_id: req.userId, chapter: chapterNumber,
+    date: todayStr(), timestamp: nowIso(),
     title: title || `Chapter ${chapterNumber}`,
-    narrative,
-    vfScore: vfScore ?? null,
-    keyMoments: keyMoments || [],
-    bossesNamed: bossesNamed || [],
-    affirmationShifts: affirmationShifts || [],
+    narrative, vf_score: vfScore ?? null,
+    key_moments: keyMoments ? JSON.stringify(keyMoments) : null,
+    bosses_named: bossesNamed ? JSON.stringify(bossesNamed) : null,
+    affirmation_shifts: affirmationShifts ? JSON.stringify(affirmationShifts) : null,
     mood: mood || null
   }
 
-  fs.appendFileSync(path.join(DATA_DIR, 'vf-chapters.jsonl'), JSON.stringify(entry) + '\n', 'utf8')
-
+  db.vfChapters.insert.run(entry)
   res.json({ ok: true, chapter: chapterNumber, id: entry.id })
 })
 
-// ─── POST /boss-encounters ────────────────────────────────────────────────────
+// ─── POST /boss-encounters ───────────────────────────────────────────────────
 
 app.post('/boss-encounters', (req, res) => {
   const { badgeSlug, type, title, content, faced, affirmationIndex } = req.body
@@ -1171,96 +1502,110 @@ app.post('/boss-encounters', (req, res) => {
   if (!['text', 'image', 'conversation'].includes(type)) return res.status(400).json({ error: 'type must be text, image, or conversation' })
 
   const today = todayStr()
+  const uid = req.userId
   let xpGained = 0
 
-  // If badgeSlug provided, still do XP (backwards compat)
+  let badgeUpdate = null
   if (badgeSlug) {
     const badge = BADGES_DATA.badges.find((b) => b.slug === badgeSlug)
     if (badge) {
-      const progress = readPersistent('badge-progress')
-      updateStreak(progress, badgeSlug, today)
-      xpGained = applyXp(progress, badgeSlug, BADGES_DATA.xpRules.bossEncounterXp)
-      progress.badges[badgeSlug].bossEncounters += 1
-      writePersistent('badge-progress', progress)
+      let progress = db.badgeProgress.get.get(uid, badgeSlug)
+      if (!progress) {
+        progress = {
+          user_id: uid, badge_slug: badgeSlug,
+          tier: 1, tier_name: 'Initiate', xp: 0,
+          exercises_completed: 0, missions_completed: 0, missions_failed: 0,
+          boss_encounters: 0, current_streak: 0, longest_streak: 0,
+          last_activity_date: null, last_updated: null
+        }
+      }
+
+      // Update streak
+      const yesterday = new Date()
+      yesterday.setDate(yesterday.getDate() - 1)
+      const ys = yesterday.toISOString().slice(0, 10)
+      if (progress.last_activity_date !== today) {
+        if (progress.last_activity_date === ys) progress.current_streak += 1
+        else progress.current_streak = 1
+        if (progress.current_streak > progress.longest_streak) progress.longest_streak = progress.current_streak
+        progress.last_activity_date = today
+      }
+
+      const mult = getStreakMultiplier(progress.current_streak)
+      xpGained = Math.round(BADGES_DATA.xpRules.bossEncounterXp * mult)
+      progress.xp = Math.max(0, progress.xp + xpGained)
+      const tier = getTierForXp(progress.xp)
+      progress.tier = tier.level
+      progress.tier_name = tier.name
+      progress.boss_encounters += 1
+      progress.last_updated = nowIso()
+
+      badgeUpdate = { ...progress, user_id: uid, badge_slug: badgeSlug }
     }
   }
 
-  // If boss was faced, log as a key decision with 5x multiplier
+  const encounter = {
+    id: randomUUID(), user_id: uid, timestamp: nowIso(),
+    badge_slug: badgeSlug || null, affirmation_index: affirmationIndex ?? null,
+    type, title: title || '', content, faced: faced ? 1 : 0,
+    xp_awarded: xpGained, source: req.body.source || 'user'
+  }
+
+  let keyDecision = null
+  let vote = null
+  let plotPoint = null
+
   if (faced) {
-    let kdData = resetForNewDay('key-decisions', today)
-    kdData.date = today
-    const decision = {
-      id: randomUUID(),
-      timestamp: nowIso(),
+    keyDecision = {
+      id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
       description: `Faced boss: ${title || content.slice(0, 60)}`,
-      type: 'face-boss',
-      multiplier: 5,
-      affirmationIndex: affirmationIndex ?? null,
-      notes: content
+      type: 'face-boss', multiplier: 5,
+      affirmation_index: affirmationIndex ?? null, notes: content
     }
-    kdData.decisions.push(decision)
-    kdData.totalMultipliedWeight += 5
-
-    // Generate 5x vote
-    let votesData = resetForNewDay('votes', today)
-    votesData.date = today
-    votesData.votes.push({
-      id: randomUUID(),
-      timestamp: nowIso(),
-      action: decision.description,
-      category: 'mental-power',
-      polarity: 'positive',
-      source: 'key-decision',
-      weight: 5
-    })
-    writeJson('votes', votesData)
-    writeJson('key-decisions', kdData)
+    vote = {
+      id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
+      action: keyDecision.description,
+      category: 'mental-power', polarity: 'positive',
+      source: 'key-decision', weight: 5
+    }
+    const episode = db.episodes.get.get(uid, today)
+    if (episode && episode.number) {
+      plotPoint = {
+        id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
+        description: `Boss faced: ${title || content.slice(0, 60)}`,
+        type: 'boss-encounter'
+      }
+    }
   }
 
-  // Append to boss-encounters.jsonl
-  const entry = {
-    id: randomUUID(),
-    timestamp: nowIso(),
-    badgeSlug: badgeSlug || null,
-    affirmationIndex: affirmationIndex ?? null,
-    type,
-    title: title || '',
-    content,
-    faced: faced || false,
-    xpAwarded: xpGained,
-    source: req.body.source || 'user'
-  }
-  fs.appendFileSync(path.join(DATA_DIR, 'boss-encounters.jsonl'), JSON.stringify(entry) + '\n', 'utf8')
-
-  // Auto plot-point for active episode
-  if (faced) {
-    addAutoPlotPoint(`Boss faced: ${title || content.slice(0, 60)}`, 'boss-encounter')
-  }
+  db.transactions.logBossEncounter(uid, encounter, keyDecision, vote, plotPoint, badgeUpdate)
 
   res.json({ ok: true, faced: faced || false, xpAwarded: xpGained })
 })
 
-// ─── GET /boss-encounters ─────────────────────────────────────────────────────
+// ─── GET /boss-encounters ────────────────────────────────────────────────────
 
 app.get('/boss-encounters', (req, res) => {
-  try {
-    const raw = fs.readFileSync(path.join(DATA_DIR, 'boss-encounters.jsonl'), 'utf8')
-    const entries = raw.split('\n').filter(Boolean)
-      .map((line) => { try { return JSON.parse(line) } catch { return null } })
-      .filter(Boolean)
-
-    // Optional filter by badge
-    const { badge, limit } = req.query
-    let result = badge ? entries.filter((e) => e.badgeSlug === badge) : entries
-    if (limit) result = result.slice(-parseInt(limit, 10))
-
-    res.json(result)
-  } catch {
-    res.json([])
+  const { badge, limit } = req.query
+  let rows
+  if (badge) {
+    rows = db.bossEncounters.getByBadge.all(req.userId, badge)
+  } else {
+    rows = db.bossEncounters.getAll.all(req.userId)
   }
+
+  const entries = rows.map((r) => ({
+    id: r.id, timestamp: r.timestamp, badgeSlug: r.badge_slug,
+    affirmationIndex: r.affirmation_index, type: r.type,
+    title: r.title, content: r.content, faced: !!r.faced,
+    xpAwarded: r.xp_awarded, source: r.source
+  }))
+
+  const result = limit ? entries.slice(-parseInt(limit, 10)) : entries
+  res.json(result)
 })
 
-// ─── Nutrition Logging ────────────────────────────────────────────────────────
+// ─── Nutrition Logging ───────────────────────────────────────────────────────
 
 const MEAL_TIMES = new Set(['breakfast', 'lunch', 'dinner', 'snack'])
 
@@ -1269,60 +1614,52 @@ app.post('/nutrition', (req, res) => {
   if (!meal) return res.status(400).json({ error: 'meal required' })
 
   const today = todayStr()
-  let data = resetForNewDay('nutrition', today)
-  data.date = today
+  const uid = req.userId
 
   const entry = {
-    id: randomUUID(),
-    timestamp: nowIso(),
-    meal,
-    time: MEAL_TIMES.has(time) ? time : 'snack',
-    nutritionScore: nutritionScore ?? null,
-    notes: notes || ''
+    id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
+    meal, time: MEAL_TIMES.has(time) ? time : 'snack',
+    nutrition_score: nutritionScore ?? null, notes: notes || ''
   }
-  data.meals.push(entry)
-  data.totalMeals = data.meals.length
 
-  const scored = data.meals.filter(m => m.nutritionScore != null)
-  data.averageScore = scored.length > 0
-    ? Math.round((scored.reduce((s, m) => s + m.nutritionScore, 0) / scored.length) * 10) / 10
+  let vote = null
+  if (nutritionScore != null) {
+    vote = {
+      id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
+      action: `Meal: ${meal}${nutritionScore >= 7 ? ' (clean)' : nutritionScore <= 3 ? ' (junk)' : ''}`,
+      category: 'nutrition', polarity: nutritionScore >= 5 ? 'positive' : 'negative',
+      source: 'nutrition-log', weight: 1
+    }
+  }
+
+  db.transactions.logNutrition(entry, vote)
+
+  // Recompute averages
+  const allMeals = db.nutrition.getByDate.all(uid, today)
+  const scored = allMeals.filter((m) => m.nutrition_score != null)
+  const averageScore = scored.length > 0
+    ? Math.round((scored.reduce((s, m) => s + m.nutrition_score, 0) / scored.length) * 10) / 10
     : null
 
-  writeJson('nutrition', data)
-
-  // Generate vote if scored
-  if (nutritionScore != null) {
-    let votesData = resetForNewDay('votes', today)
-    votesData.date = today
-    votesData.votes.push({
-      id: randomUUID(), timestamp: nowIso(),
-      action: `Meal: ${meal}${nutritionScore >= 7 ? ' (clean)' : nutritionScore <= 3 ? ' (junk)' : ''}`,
-      category: 'nutrition',
-      polarity: nutritionScore >= 5 ? 'positive' : 'negative',
-      source: 'nutrition-log',
-      weight: 1
-    })
-    writeJson('votes', votesData)
-  }
-
-  res.json({ ok: true, entry, averageScore: data.averageScore, totalMeals: data.totalMeals })
+  res.json({ ok: true, entry: rowToApi(entry), averageScore, totalMeals: allMeals.length })
 })
 
-// ─── Dopamine Tracking ────────────────────────────────────────────────────────
+// ─── Dopamine Tracking ──────────────────────────────────────────────────────
 
 const DOPAMINE_OVERSTIM_TYPES = new Set(['sugar', 'alcohol', 'sr', 'social-media', 'gaming', 'streaming', 'caffeine'])
 const FARMING_POINT_CURVE = [
   { min: 60, points: 15 }, { min: 30, points: 7 }, { min: 15, points: 3 }, { min: 5, points: 1 }
 ]
 
-const calcDopamineNet = (data) => {
+const calcDopamineNet = (farming, overstimCount, screenMinutes) => {
   let score = 5
-  score += Math.floor(data.farming.totalPoints / 15)
-  score -= data.overstimulation.totalEvents
-  if (data.screenTime.totalMinutes !== null) {
+  const totalPoints = farming.reduce((s, f) => s + (f.points || 0), 0)
+  score += Math.floor(totalPoints / 15)
+  score -= overstimCount
+  if (screenMinutes !== null && screenMinutes !== undefined) {
     const threshold = 120
-    if (data.screenTime.totalMinutes > threshold) {
-      score -= Math.floor((data.screenTime.totalMinutes - threshold) / 60)
+    if (screenMinutes > threshold) {
+      score -= Math.floor((screenMinutes - threshold) / 60)
     } else {
       score += 1
     }
@@ -1339,19 +1676,15 @@ const calcFarmingPoints = (durationMinutes) => {
 
 app.post('/dopamine/farm-start', (req, res) => {
   const today = todayStr()
-  let data = resetForNewDay('dopamine', today)
-  data.date = today
+  const sessionId = randomUUID()
 
-  const session = {
-    id: randomUUID(),
-    startedAt: nowIso(),
-    endedAt: null,
-    durationMinutes: 0,
-    points: 0
-  }
-  data.farming.sessions.push(session)
-  writeJson('dopamine', data)
-  res.json({ ok: true, sessionId: session.id })
+  db.dopamine.farming.insert.run({
+    id: sessionId, user_id: req.userId, date: today,
+    started_at: nowIso(), ended_at: null,
+    duration_minutes: 0, points: 0
+  })
+
+  res.json({ ok: true, sessionId })
 })
 
 app.post('/dopamine/farm-end', (req, res) => {
@@ -1359,37 +1692,47 @@ app.post('/dopamine/farm-end', (req, res) => {
   if (!sessionId) return res.status(400).json({ error: 'sessionId required' })
 
   const today = todayStr()
-  let data = resetForNewDay('dopamine', today)
-  data.date = today
+  const uid = req.userId
+  const session = db.dopamine.farming.get.get(sessionId, uid)
+  if (!session || session.ended_at) return res.status(400).json({ error: 'Active farming session not found' })
 
-  const session = data.farming.sessions.find(s => s.id === sessionId && !s.endedAt)
-  if (!session) return res.status(400).json({ error: 'Active farming session not found' })
+  const endedAt = nowIso()
+  const startMs = new Date(session.started_at).getTime()
+  const endMs = new Date(endedAt).getTime()
+  const durationMinutes = Math.round((endMs - startMs) / 60000)
+  const points = calcFarmingPoints(durationMinutes)
 
-  session.endedAt = nowIso()
-  const startMs = new Date(session.startedAt).getTime()
-  const endMs = new Date(session.endedAt).getTime()
-  session.durationMinutes = Math.round((endMs - startMs) / 60000)
-  session.points = calcFarmingPoints(session.durationMinutes)
+  // Get all farming sessions for recalc
+  const allFarming = db.dopamine.farming.getByDate.all(uid, today)
+  // Simulate the updated session
+  const updatedFarming = allFarming.map((f) => f.id === sessionId ? { ...f, points, duration_minutes: durationMinutes } : f)
 
-  data.farming.totalPoints = data.farming.sessions.reduce((s, sess) => s + sess.points, 0)
-  data.farming.totalMinutes = data.farming.sessions.reduce((s, sess) => s + sess.durationMinutes, 0)
-  data.netScore = calcDopamineNet(data)
-  writeJson('dopamine', data)
+  const overstimCount = db.dopamine.overstim.getByDate.all(uid, today).length
+  const daily = db.dopamine.daily.get.get(uid, today)
+  const screenMinutes = daily?.screen_minutes ?? null
+  const netScore = calcDopamineNet(updatedFarming, overstimCount, screenMinutes)
 
-  // Generate positive vote
-  if (session.points > 0) {
-    let votesData = resetForNewDay('votes', today)
-    votesData.date = today
-    votesData.votes.push({
-      id: randomUUID(), timestamp: nowIso(),
-      action: `Dopamine farming: ${session.durationMinutes}min unstimulated`,
+  let vote = null
+  if (points > 0) {
+    vote = {
+      id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
+      action: `Dopamine farming: ${durationMinutes}min unstimulated`,
       category: 'mental-power', polarity: 'positive',
-      source: 'dopamine-farming', weight: Math.max(1, Math.round(session.points / 5))
-    })
-    writeJson('votes', votesData)
+      source: 'dopamine-farming', weight: Math.max(1, Math.round(points / 5))
+    }
   }
 
-  res.json({ ok: true, session, netScore: data.netScore })
+  db.transactions.logDopamineFarmEnd(
+    { id: sessionId, user_id: uid, ended_at: endedAt, duration_minutes: durationMinutes, points },
+    { user_id: uid, date: today, screen_minutes: screenMinutes, screen_pickups: daily?.screen_pickups ?? null, screen_top_apps: daily?.screen_top_apps ?? null, screen_captured_at: daily?.screen_captured_at ?? null, net_score: netScore },
+    vote
+  )
+
+  res.json({
+    ok: true,
+    session: { id: sessionId, startedAt: session.started_at, endedAt, durationMinutes, points },
+    netScore
+  })
 })
 
 app.post('/dopamine/overstimulation', (req, res) => {
@@ -1398,28 +1741,34 @@ app.post('/dopamine/overstimulation', (req, res) => {
   if (!DOPAMINE_OVERSTIM_TYPES.has(type)) return res.status(400).json({ error: `type must be one of: ${[...DOPAMINE_OVERSTIM_TYPES].join(', ')}` })
 
   const today = todayStr()
-  let data = resetForNewDay('dopamine', today)
-  data.date = today
+  const uid = req.userId
 
-  data.overstimulation.events.push({
-    id: randomUUID(), timestamp: nowIso(), type, notes: notes || ''
-  })
-  data.overstimulation.totalEvents = data.overstimulation.events.length
-  data.netScore = calcDopamineNet(data)
-  writeJson('dopamine', data)
+  const overstim = {
+    id: randomUUID(), user_id: uid, date: today,
+    timestamp: nowIso(), type, notes: notes || ''
+  }
 
-  // Generate negative vote
-  let votesData = resetForNewDay('votes', today)
-  votesData.date = today
-  votesData.votes.push({
-    id: randomUUID(), timestamp: nowIso(),
+  // Recalc net score
+  const farming = db.dopamine.farming.getByDate.all(uid, today)
+  const existingOverstimCount = db.dopamine.overstim.getByDate.all(uid, today).length + 1
+  const daily = db.dopamine.daily.get.get(uid, today)
+  const screenMinutes = daily?.screen_minutes ?? null
+  const netScore = calcDopamineNet(farming, existingOverstimCount, screenMinutes)
+
+  const vote = {
+    id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
     action: `Overstimulation: ${type}${notes ? ' — ' + notes : ''}`,
     category: 'mental-power', polarity: 'negative',
     source: 'dopamine-tracking', weight: 1
-  })
-  writeJson('votes', votesData)
+  }
 
-  res.json({ ok: true, totalEvents: data.overstimulation.totalEvents, netScore: data.netScore })
+  db.transactions.logDopamineOverstim(
+    overstim,
+    { user_id: uid, date: today, screen_minutes: screenMinutes, screen_pickups: daily?.screen_pickups ?? null, screen_top_apps: daily?.screen_top_apps ?? null, screen_captured_at: daily?.screen_captured_at ?? null, net_score: netScore },
+    vote
+  )
+
+  res.json({ ok: true, totalEvents: existingOverstimCount, netScore })
 })
 
 app.post('/dopamine/screen-time', (req, res) => {
@@ -1427,57 +1776,55 @@ app.post('/dopamine/screen-time', (req, res) => {
   if (totalMinutes === undefined) return res.status(400).json({ error: 'totalMinutes required' })
 
   const today = todayStr()
-  let data = resetForNewDay('dopamine', today)
-  data.date = today
+  const uid = req.userId
 
-  data.screenTime.totalMinutes = totalMinutes
-  data.screenTime.pickups = pickups ?? null
-  data.screenTime.topApps = topApps || []
-  data.screenTime.capturedAt = nowIso()
-  data.netScore = calcDopamineNet(data)
-  writeJson('dopamine', data)
-  res.json({ ok: true, netScore: data.netScore })
+  // Recalc net score
+  const farming = db.dopamine.farming.getByDate.all(uid, today)
+  const overstimCount = db.dopamine.overstim.getByDate.all(uid, today).length
+  const netScore = calcDopamineNet(farming, overstimCount, totalMinutes)
+
+  db.dopamine.daily.upsert.run({
+    user_id: uid, date: today,
+    screen_minutes: totalMinutes,
+    screen_pickups: pickups ?? null,
+    screen_top_apps: topApps ? JSON.stringify(topApps) : null,
+    screen_captured_at: nowIso(),
+    net_score: netScore
+  })
+
+  res.json({ ok: true, netScore })
 })
 
-// ─── Episode Framing ──────────────────────────────────────────────────────────
-
-const getNextEpisodeNumber = () => {
-  try {
-    const historyDirs = fs.readdirSync(HISTORY_DIR)
-      .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort()
-    let maxNum = 0
-    for (const dir of historyDirs) {
-      try {
-        const ep = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, dir, 'episode.json'), 'utf8'))
-        if (ep.number && ep.number > maxNum) maxNum = ep.number
-      } catch {}
-    }
-    // Also check current
-    const current = readJson('episode')
-    if (current.number && current.number > maxNum) maxNum = current.number
-    return maxNum + 1
-  } catch {
-    return 1
-  }
-}
+// ─── Episode Framing ─────────────────────────────────────────────────────────
 
 app.post('/episode', (req, res) => {
   const { title, previouslyOn, todaysArc, rating, status } = req.body
   const today = todayStr()
-  let data = resetForNewDay('episode', today)
-  data.date = today
+  const uid = req.userId
 
-  // Auto-assign episode number on first creation
-  if (!data.number) data.number = getNextEpisodeNumber()
+  // Get existing or determine next number
+  const existing = db.episodes.get.get(uid, today)
+  let number = existing?.number
+  if (!number) {
+    const maxRow = db.episodes.maxNumber.get(uid)
+    number = (maxRow?.max_num || 0) + 1
+  }
 
-  if (title !== undefined) data.title = title
-  if (previouslyOn !== undefined) data.previouslyOn = previouslyOn
-  if (todaysArc !== undefined) data.todaysArc = todaysArc
-  if (rating !== undefined) data.rating = rating
-  if (status !== undefined) data.status = status
+  db.episodes.upsert.run({
+    user_id: uid, date: today, number,
+    title: title !== undefined ? title : (existing?.title || null),
+    previously_on: previouslyOn !== undefined ? previouslyOn : (existing?.previously_on || null),
+    todays_arc: todaysArc !== undefined ? todaysArc : (existing?.todays_arc || null),
+    rating: rating !== undefined ? rating : (existing?.rating ?? null),
+    status: status !== undefined ? status : (existing?.status || 'open')
+  })
 
-  writeJson('episode', data)
-  res.json({ ok: true, episode: data })
+  // Read back for response
+  const row = db.episodes.get.get(uid, today)
+  const plotPoints = db.plotPoints.getByDate.all(uid, today).map(rowToApi)
+  const api = rowToApi(row)
+  api.plotPoints = plotPoints
+  res.json({ ok: true, episode: api })
 })
 
 app.post('/episode/plot-point', (req, res) => {
@@ -1485,49 +1832,72 @@ app.post('/episode/plot-point', (req, res) => {
   if (!description) return res.status(400).json({ error: 'description required' })
 
   const today = todayStr()
-  let data = resetForNewDay('episode', today)
-  data.date = today
-  if (!data.number) data.number = getNextEpisodeNumber()
+  const uid = req.userId
 
-  data.plotPoints.push({
-    id: randomUUID(),
-    timestamp: nowIso(),
-    description,
-    type: type || 'moment'
+  // Ensure episode exists
+  const existing = db.episodes.get.get(uid, today)
+  if (!existing) {
+    const maxRow = db.episodes.maxNumber.get(uid)
+    const number = (maxRow?.max_num || 0) + 1
+    db.episodes.upsert.run({
+      user_id: uid, date: today, number,
+      title: null, previously_on: null, todays_arc: null,
+      rating: null, status: 'open'
+    })
+  }
+
+  db.plotPoints.insert.run({
+    id: randomUUID(), user_id: uid, date: today, timestamp: nowIso(),
+    description, type: type || 'moment'
   })
 
-  writeJson('episode', data)
-  res.json({ ok: true, plotPoints: data.plotPoints.length })
+  const plotPoints = db.plotPoints.getByDate.all(uid, today)
+  res.json({ ok: true, plotPoints: plotPoints.length })
 })
 
 app.get('/episodes', (req, res) => {
   const { limit } = req.query
-  const episodes = []
-
-  // Get from history
-  try {
-    const dirs = fs.readdirSync(HISTORY_DIR)
-      .filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort()
-    for (const dir of dirs) {
-      try {
-        const ep = JSON.parse(fs.readFileSync(path.join(HISTORY_DIR, dir, 'episode.json'), 'utf8'))
-        if (ep.number) episodes.push(ep)
-      } catch {}
-    }
-  } catch {}
-
-  // Add today's episode
-  const current = readJson('episode')
-  if (current.number) episodes.push(current)
-
-  // Sort by number descending
-  episodes.sort((a, b) => (b.number || 0) - (a.number || 0))
+  const rows = db.episodes.getAll.all(req.userId)
+  const episodes = rows.map((r) => {
+    const api = rowToApi(r)
+    api.plotPoints = db.plotPoints.getByDate.all(req.userId, r.date).map(rowToApi)
+    return api
+  })
 
   const result = limit ? episodes.slice(0, parseInt(limit, 10)) : episodes
   res.json(result)
 })
 
-// ─── Error handler ────────────────────────────────────────────────────────────
+// ─── New endpoints: Users + API Calls ────────────────────────────────────────
+
+app.get('/users', (req, res) => {
+  const rows = db.users.getAll.all()
+  res.json(rows.map((r) => ({
+    id: r.id, name: r.name, createdAt: r.created_at, isDefault: !!r.is_default
+  })))
+})
+
+app.post('/users', (req, res) => {
+  const { name } = req.body
+  if (!name) return res.status(400).json({ error: 'name required' })
+  const id = randomUUID()
+  db.users.insert.run(id, name, nowIso())
+  res.json({ ok: true, id, name })
+})
+
+app.get('/api-calls', (req, res) => {
+  const { limit, user } = req.query
+  const n = parseInt(limit, 10) || 100
+  let rows
+  if (user) {
+    rows = db.apiCalls.getByUser.all(user, n)
+  } else {
+    rows = db.apiCalls.get.all(n)
+  }
+  res.json(rows.map(rowToApi))
+})
+
+// ─── Error handler ───────────────────────────────────────────────────────────
 
 process.on('uncaughtException', (err) => {
   console.error(`[${nowIso()}] UNCAUGHT EXCEPTION:`, err)
@@ -1537,15 +1907,11 @@ process.on('unhandledRejection', (err) => {
   console.error(`[${nowIso()}] UNHANDLED REJECTION:`, err)
 })
 
-// ─── Start ────────────────────────────────────────────────────────────────────
-
-fs.mkdirSync(HISTORY_DIR, { recursive: true })
+// ─── Start ───────────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
   console.log(`[${nowIso()}] Limitless file server :${PORT}`)
-  console.log(`  Data:       ${DATA_DIR}`)
-  console.log(`  History:    ${HISTORY_DIR}`)
-  console.log(`  Daily:      ${DAILY_FILES.join(', ')}`)
-  console.log(`  Persistent: ${Object.keys(PERSISTENT_STUBS).join(', ')}`)
+  console.log(`  Storage:    SQLite (WAL mode)`)
   console.log(`  Badges:     ${BADGES_DATA.badges.length} badges, ${MISSIONS_DATA.missions.length} missions`)
+  console.log(`  Users:      default user ${DEFAULT_USER_ID}`)
 })

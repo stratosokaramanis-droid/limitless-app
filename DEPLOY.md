@@ -24,13 +24,20 @@ npm install
 
 ---
 
-## 2. Create the shared data directory
+## 2. Create the data directory and initialize the database
 
 ```bash
 mkdir -p ~/.openclaw/data/shared
 ```
 
-The server reads/writes all runtime state here. It will auto-create files on first use.
+The server stores all runtime state in a SQLite database at `~/.openclaw/data/shared/limitless.db`. The database is created automatically on first server start, with schema applied from `server/schema.sql`.
+
+**If migrating from the old JSON file-based server:**
+```bash
+npm run migrate
+```
+
+This reads all existing JSON/JSONL files from `~/.openclaw/data/shared/` and inserts them into the SQLite database. The script is idempotent (safe to run multiple times). Keep the old JSON files as a rollback safety net for a week.
 
 ---
 
@@ -155,7 +162,9 @@ server: {
 | Setup script | ✅ | `scripts/setup-agents.sh` |
 | Bot tokens | ❌ | Add to `openclaw.json` manually |
 | API keys | ❌ | Add to OpenClaw config manually |
-| Runtime data | ❌ | `~/.openclaw/data/shared/` — live state, starts fresh |
+| SQLite database | ❌ | `~/.openclaw/data/shared/limitless.db` — created on first start |
+| Migration script | ✅ | `server/migrate-to-sqlite.js` — one-time JSON → SQLite |
+| DB schema | ✅ | `server/schema.sql` — single source of truth |
 | Cloudflare tunnel token | ❌ | Create via Cloudflare dashboard |
 
 ---

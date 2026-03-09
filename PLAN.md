@@ -36,6 +36,13 @@
 - [x] Badge data: persistent files (no daily reset) for progress + missions
 - [x] Full docs update (DOCS.md sections 14-15)
 - [x] HistoryTab: 14-day trend view + day drilldown (sleep/morning/work/votes) + 6th nav tab
+- [x] UI overhaul: game feel across all screens (no emojis, SVG icons, atmospheric gradients)
+- [x] HomeScreen: Power ring (VF), State ring, RPG attribute bars with SVG icons, quest chain, key decisions quick-add, affirmation grid
+- [x] MentalGame: Rank seal centerpiece, discipline cards with SVG glyphs, mission quest board, training log
+- [x] DopamineTracker: Balance beam SVG, farming timer with milestones, overstim grid (SVG icons + shake + count badges), session timeline, weekly dots
+- [x] Episode system: EpisodeOpen (cinematic day start), EpisodeClose (key scenes, SVG rating icons, credits), EpisodeBar (shimmer, expandable)
+- [x] BadgeDetailSheet: discipline glyph icons, streak text (no emojis)
+- [x] CLAUDE.md: project init file for Claude Code sessions
 
 ---
 

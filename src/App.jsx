@@ -13,6 +13,8 @@ import EpisodeBar from './components/EpisodeBar.jsx'
 import morningRoutine from './data/morningRoutine.js'
 import DevPanel from './components/DevPanel.jsx'
 import DayCountdownBar from './components/DayCountdownBar.jsx'
+import EpisodeOpen from './components/EpisodeOpen.jsx'
+import EpisodeClose from './components/EpisodeClose.jsx'
 
 const STORAGE_KEYS = {
   statuses: 'limitless_morning_statuses',
@@ -54,6 +56,8 @@ export default function App() {
     return stored ? Number(stored) : null
   })
   const [now, setNow] = useState(Date.now())
+  const [showEpisodeClose, setShowEpisodeClose] = useState(false)
+  const [episodeCloseData, setEpisodeCloseData] = useState(null)
 
   const items = useMemo(() => morningRoutine, [])
   const flatItems = useMemo(() => morningRoutine.flatMap((category) => category.items), [])
@@ -222,7 +226,7 @@ export default function App() {
     }
   }
 
-  const handleEndDay = () => {
+  const doEndDay = () => {
     dayEndedManually.current = true
     const today = new Date().toISOString().slice(0, 10)
     const vfCompletedDate = localStorage.getItem('limitless_vf_completed_date')
@@ -239,6 +243,22 @@ export default function App() {
     setStatuses({})
     setCurrentView('morning-routine')
     setCreativeBlockStartTime(null)
+    setShowEpisodeClose(false)
+    setEpisodeCloseData(null)
+  }
+
+  const handleEndDay = () => {
+    // Show episode close screen before fully ending the day
+    fetch('/api/episode').then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (d?.number) {
+          setEpisodeCloseData(d)
+          setShowEpisodeClose(true)
+        } else {
+          doEndDay()
+        }
+      })
+      .catch(() => doEndDay())
   }
 
   const handleStartCreativeBlock = () => {
@@ -286,25 +306,29 @@ export default function App() {
           />
         )}
         <main className="flex-1 min-h-0 flex flex-col">
-          <AnimatePresence mode="wait" initial={false}>
-            <motion.div
-              key={activeTab}
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.12 }}
-              className="flex-1 min-h-0 flex flex-col"
-            >
-              {activeTab === 'home' && <HomeScreen />}
-              {activeTab === 'focus' && renderFocus()}
-              {activeTab === 'state' && <StateTab />}
-              {activeTab === 'mental' && <MentalGame />}
-              {activeTab === 'dopamine' && <DopamineTracker />}
-              {activeTab === 'badges' && <BadgesTab />}
-              {activeTab === 'stats' && <StatsTab />}
-              {activeTab === 'history' && <HistoryTab />}
-            </motion.div>
-          </AnimatePresence>
+          {showEpisodeClose && episodeCloseData ? (
+            <EpisodeClose episode={episodeCloseData} onClose={doEndDay} />
+          ) : (
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={activeTab}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.12 }}
+                className="flex-1 min-h-0 flex flex-col"
+              >
+                {activeTab === 'home' && <HomeScreen />}
+                {activeTab === 'focus' && renderFocus()}
+                {activeTab === 'state' && <StateTab />}
+                {activeTab === 'mental' && <MentalGame />}
+                {activeTab === 'dopamine' && <DopamineTracker />}
+                {activeTab === 'badges' && <BadgesTab />}
+                {activeTab === 'stats' && <StatsTab />}
+                {activeTab === 'history' && <HistoryTab />}
+              </motion.div>
+            </AnimatePresence>
+          )}
         </main>
       </div>
 

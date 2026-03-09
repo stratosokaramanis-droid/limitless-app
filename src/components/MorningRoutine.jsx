@@ -6,6 +6,7 @@ import CreativeBlock from './CreativeBlock.jsx'
 import WorkSessions from './WorkSessions.jsx'
 import NightRoutine from './NightRoutine.jsx'
 import VFGame from './VFGame.jsx'
+import EpisodeOpen from './EpisodeOpen.jsx'
 
 const MODE_KEY = 'limitless_morning_mode'
 
@@ -99,35 +100,16 @@ export default function MorningRoutine({
   const doneCount = flatItems.filter(item => statuses[item.id] === 'done').length
   const skippedCount = flatItems.filter(item => statuses[item.id] === 'skipped').length
 
-  // Pre-day: Start Day screen
+  const [episodeData, setEpisodeData] = useState(null)
+
+  useEffect(() => {
+    if (dayActive) return
+    fetch('/api/episode').then(r => r.ok ? r.json() : null).then(d => { if (d) setEpisodeData(d) }).catch(() => {})
+  }, [dayActive])
+
+  // Pre-day: Episode Open screen (cinematic start)
   if (!dayActive) {
-    return (
-      <div className="flex flex-1 flex-col px-6 py-10">
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="text-[13px] font-medium text-white/25"
-        >
-          {formatDate()}
-        </motion.p>
-        <div className="flex flex-1 flex-col items-center justify-center gap-8">
-          <motion.div
-            className="flex w-full flex-col gap-6"
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-          >
-            <motion.button
-              whileTap={{ scale: 0.97 }}
-              onClick={onStartDay}
-              className="w-full rounded-3xl border border-white/10 bg-white/10 px-6 py-5 text-[16px] font-semibold text-white"
-            >
-              Start Day
-            </motion.button>
-          </motion.div>
-        </div>
-      </div>
-    )
+    return <EpisodeOpen episode={episodeData} onStartDay={onStartDay} />
   }
 
   // Special views

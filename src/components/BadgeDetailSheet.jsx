@@ -5,6 +5,31 @@ import { haptics } from '../utils/haptics.js'
 const TIER_NAMES = ['', 'Initiate', 'Apprentice', 'Practitioner', 'Adept', 'Master']
 const TIER_XP = [0, 0, 750, 3000, 10000, 30000]
 
+const DISCIPLINE_COLORS = {
+  'reality-distortion-field': '#FF6B6B',
+  'frame-control': '#4ECDC4',
+  'fearlessness': '#FF9F43',
+  'aggression': '#EE5A24',
+  'carefreeness': '#7ED6DF',
+  'presence': '#B8E994',
+  'bias-to-action': '#F8C291',
+}
+
+function DisciplineGlyph({ slug, size = 28 }) {
+  const c = DISCIPLINE_COLORS[slug] || '#888'
+  const p = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: c, strokeWidth: '1.8', strokeLinecap: 'round', strokeLinejoin: 'round' }
+  switch (slug) {
+    case 'reality-distortion-field': return <svg {...p}><path d="M12 5l7 7-7 7-7-7z" /><circle cx="12" cy="12" r="2.5" fill={c} fillOpacity="0.15" /></svg>
+    case 'frame-control': return <svg {...p}><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9z" /></svg>
+    case 'fearlessness': return <svg {...p}><path d="M12 2v16M8 6l4-4 4 4M7 22h10" /></svg>
+    case 'aggression': return <svg {...p}><path d="M12 22c-2-3-8-7-8-13a8 8 0 0116 0c0 6-6 10-8 13z" /></svg>
+    case 'carefreeness': return <svg {...p}><path d="M2 12c3-4 6-5 10-5s7 1 10 5" /><path d="M2 17c3-4 6-5 10-5s7 1 10 5" /></svg>
+    case 'presence': return <svg {...p}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3" /></svg>
+    case 'bias-to-action': return <svg {...p}><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" /></svg>
+    default: return <svg {...p}><circle cx="12" cy="12" r="9" /></svg>
+  }
+}
+
 function HoldButton({ label, duration = 1000, onComplete, tone = 'emerald', className = '' }) {
   const [progress, setProgress] = useState(0)
   const [holding, setHolding] = useState(false)
@@ -280,8 +305,8 @@ export default function BadgeDetailSheet({
             {/* Scrollable content — no drag interference */}
             <div className="h-full overflow-y-auto no-scrollbar px-6 pb-10 pt-10">
               <div className="flex items-start gap-4">
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/[0.06] text-[40px]">
-                  {badge.emoji}
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/[0.06]">
+                  <DisciplineGlyph slug={badge.slug} size={32} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-start justify-between gap-3">
@@ -296,8 +321,7 @@ export default function BadgeDetailSheet({
                     </span>
                     {streak > 0 && (
                       <div className="flex items-center gap-2 rounded-full bg-white/10 px-2.5 py-1 text-[11px] text-white/70">
-                        <span className="text-[13px]">🔥</span>
-                        <span className="font-medium">{streak}d</span>
+                        <span className="font-medium">{streak}d streak</span>
                         {multiplier && (
                           <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-300">
                             {multiplier}
